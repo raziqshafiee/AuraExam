@@ -2,6 +2,7 @@
 
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { flushSync } from "react-dom";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
 import { getExamForTaking, recordFlag, saveExamProgress, submitExam } from "@/lib/supabase/exams";
@@ -79,6 +80,7 @@ function TakeExam() {
   // fullscreen + integrity listeners stay mounted the whole time.
   const [showReview, setShowReview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [navigating, setNavigating] = useState(false);
 
   // Mirror of `answers` for async handlers (autosave, timer submit) that must
   // read the current value without being re-registered on every keystroke.
@@ -407,11 +409,29 @@ function TakeExam() {
         sessionStorage.removeItem(`${storageKey}-idx`);
       } catch {}
       toast.success("Exam submitted successfully!");
+
+      // Paint the opaque cover SYNCHRONOUSLY before doing anything else, so the
+      // exam is hidden the instant we start leaving the page. flushSync forces
+      // the overlay into the DOM now rather than on React's next async render.
+      flushSync(() => setNavigating(true));
+
+      // Exit fullscreen NOW — while the cover is up and the exam page is still
+      // mounted — instead of letting the unmount cleanup do it during the route
+      // swap. The browser's native fullscreen zoom-out animation is a compositor
+      // effect that paints above all DOM (our z-[60] cover can't hide it), so we
+      // let it replay the opaque cover here, then navigate in windowed mode with
+      // no fullscreen animation left to flash the exam. submittingRef is already
+      // true, so onFullscreenChange suppresses the fullscreen-exit integrity flag.
+      if (document.fullscreenElement) {
+        await document.exitFullscreen().catch(() => {});
+      }
+
       navigate({ to: "/student/exams/$examId/result", params: { examId: exam.id } });
     } catch (err: any) {
       toast.error(err?.message ?? "Failed to submit exam");
       submittingRef.current = false;
       setSubmitting(false);
+      setNavigating(false);
     }
   }
 
@@ -432,6 +452,14 @@ function TakeExam() {
 
   return (
     <div className="min-h-screen bg-secondary">
+      {/* Full-page opaque cover shown while the result page loader runs.
+          Prevents the exam questions from flashing through during navigation. */}
+      {navigating && (
+        <div className="fixed inset-0 z-[60] bg-[#fffdf5] flex flex-col items-center justify-center gap-4">
+          <div className="w-10 h-10 border-4 border-ink border-t-lime rounded-full animate-spin" />
+          <p className="font-mono text-sm text-ink/60">Loading your results…</p>
+        </div>
+      )}
       {/* Lockdown bar */}
       <div className="bg-ink text-background px-6 py-2 flex items-center gap-4 text-xs font-mono">
         <span className="text-lime">● LOCKDOWN ACTIVE</span>
