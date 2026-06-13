@@ -6,7 +6,7 @@ import {
   markAllNotificationsRead,
   type Notification,
 } from "@/lib/supabase/notifications";
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, Check, CheckCheck } from "lucide-react";
 import { fmtMY } from "@/lib/datetime";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -31,15 +31,21 @@ function fmt(iso: string) {
 
 export function NotificationsPage({ initialNotifications }: { initialNotifications: Notification[] }) {
   const [notifications, setNotifications] = useState(initialNotifications);
+  const [marking, setMarking] = useState<string | null>(null);
   const unreadCount = notifications.filter((n) => !n.readAt).length;
   const qc = useQueryClient();
 
   async function handleMarkRead(id: string) {
-    await markNotificationRead({ data: id });
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, readAt: new Date().toISOString() } : n))
-    );
-    qc.invalidateQueries({ queryKey: ["unread-count"] });
+    setMarking(id);
+    try {
+      await markNotificationRead({ data: id });
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, readAt: new Date().toISOString() } : n))
+      );
+      qc.invalidateQueries({ queryKey: ["unread-count"] });
+    } finally {
+      setMarking(null);
+    }
   }
 
   async function handleMarkAllRead() {
@@ -76,33 +82,50 @@ export function NotificationsPage({ initialNotifications }: { initialNotificatio
           {notifications.map((n) => (
             <Card
               key={n.id}
-              className={`cursor-pointer transition-colors ${!n.readAt ? "bg-amber/20 border-amber" : ""}`}
-              onClick={() => !n.readAt && handleMarkRead(n.id)}
+              className={`transition-colors ${!n.readAt ? "bg-amber/20 border-amber" : ""}`}
             >
-              <div className="flex items-start justify-between gap-4 flex-wrap">
-                <div className="flex items-start gap-3 flex-1 min-w-0">
-                  {!n.readAt && (
-                    <div className="w-2 h-2 rounded-full bg-amber mt-2 shrink-0" />
-                  )}
-                  <div className={!n.readAt ? "" : "pl-5"}>
-                    <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
-                      {TYPE_LABELS[n.type] ?? n.type}
-                    </div>
-                    <div className="font-display font-bold mt-0.5">{n.title}</div>
-                    {n.body && <p className="text-sm text-muted-foreground mt-1">{n.body}</p>}
-                    {n.link && (
-                      <a
-                        href={n.link}
-                        className="text-xs font-mono underline text-sky mt-1 block"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        View →
-                      </a>
-                    )}
-                  </div>
+              <div className="flex items-start gap-3">
+                {/* Unread dot */}
+                <div className="shrink-0 mt-1.5">
+                  {!n.readAt
+                    ? <div className="w-2 h-2 rounded-full bg-amber" />
+                    : <div className="w-2 h-2" />}
                 </div>
-                <div className="text-xs font-mono text-muted-foreground whitespace-nowrap shrink-0">
-                  {fmt(n.createdAt)}
+
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+                        {TYPE_LABELS[n.type] ?? n.type}
+                      </div>
+                      <div className="font-display font-bold mt-0.5">{n.title}</div>
+                      {n.body && <p className="text-sm text-muted-foreground mt-1">{n.body}</p>}
+                      {n.link && (
+                        <a href={n.link} className="text-xs font-mono underline text-sky mt-1 block">
+                          View →
+                        </a>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">
+                        {fmt(n.createdAt)}
+                      </span>
+                      {!n.readAt && (
+                        <WakeoutButton
+                          size="sm"
+                          variant="secondary"
+                          disabled={marking === n.id}
+                          onClick={() => handleMarkRead(n.id)}
+                          title="Mark as read"
+                        >
+                          {marking === n.id
+                            ? <span className="text-xs">…</span>
+                            : <><Check className="w-3.5 h-3.5" /><span className="hidden sm:inline">Mark read</span></>}
+                        </WakeoutButton>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </Card>

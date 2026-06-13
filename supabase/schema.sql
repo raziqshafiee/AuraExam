@@ -65,6 +65,7 @@ create table if not exists exams (
   duration        int not null check (duration > 0),
   questions_count int not null default 0,
   status          text not null check (status in ('draft','upcoming','live','closed','graded')) default 'draft',
+  shuffle         boolean not null default false,
   created_by      uuid references profiles(id) on delete set null,
   created_at      timestamptz not null default now()
 );

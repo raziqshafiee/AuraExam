@@ -1,15 +1,24 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { Card, PageHeader, Section } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { getStudentExamResult } from "@/lib/supabase/exams";
-import { AlertTriangle, RefreshCw, CheckCircle, XCircle, FileText } from "lucide-react";
+import { AlertTriangle, RefreshCw, CheckCircle, XCircle, FileText, ClipboardX, UserX } from "lucide-react";
 import { fmtMY } from "@/lib/datetime";
 
 export const Route = createFileRoute(
   "/_authenticated/student/exams/$examId/result"
 )({
   head: () => ({ meta: [{ title: "Result — Aura" }] }),
-  loader: ({ params }) => getStudentExamResult({ data: params.examId }),
+  loader: async ({ params }) => {
+    try {
+      return await getStudentExamResult({ data: params.examId });
+    } catch (err: any) {
+      if (err?.message === "No submission found for this exam") {
+        throw redirect({ to: "/student/exams/$examId/lobby", params });
+      }
+      throw err;
+    }
+  },
   component: Result,
 });
 
@@ -20,6 +29,8 @@ function Result() {
 
   const isFlagged = submission.status === "flagged";
   const isRetakeApproved = submission.status === "retake-approved";
+  const isForceSubmitted = submission.forceSubmitted === true;
+  const isMissed = submission.missed === true;
   const score = submission.score ?? 0;
   const total = submission.total ?? 0;
   const pct = total > 0 ? Math.round((score / total) * 100) : 0;
@@ -35,9 +46,60 @@ function Result() {
             ? "Retake approved — ready to retake"
             : isFlagged
               ? "Auto-submitted · integrity flags"
-              : "Submitted · auto-graded"
+              : isMissed
+                ? "Exam closed · not attended"
+                : isForceSubmitted
+                  ? "Exam closed · no answers recorded"
+                  : "Submitted · auto-graded"
         }
       />
+
+      {isForceSubmitted && (
+        <Card className="mb-6 border-ink/30 bg-secondary">
+          <div className="flex items-start gap-3">
+            <ClipboardX className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
+            <div>
+              <div className="font-display font-bold text-lg">No answers submitted</div>
+              <p className="text-sm mt-1 text-muted-foreground">
+                The exam window closed before you submitted any answers. Your session was recorded as
+                present but no responses were received — your score for this paper is{" "}
+                <strong>0 / {total} pts</strong>.
+              </p>
+              <p className="text-sm mt-2 text-muted-foreground">
+                If you believe this is a mistake, you may file a score appeal within 7 days.
+              </p>
+              <div className="mt-4">
+                <WakeoutButton asChild size="sm" variant="secondary">
+                  <Link to="/student/appeals/new">File score appeal</Link>
+                </WakeoutButton>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {isMissed && (
+        <Card className="mb-6 border-ink/30 bg-secondary">
+          <div className="flex items-start gap-3">
+            <UserX className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
+            <div>
+              <div className="font-display font-bold text-lg">You did not attend this exam</div>
+              <p className="text-sm mt-1 text-muted-foreground">
+                No submission was recorded for this paper. Your score is{" "}
+                <strong>0 / {total} pts</strong>.
+              </p>
+              <p className="text-sm mt-2 text-muted-foreground">
+                If you believe this is an error, you may file a score appeal within 7 days.
+              </p>
+              <div className="mt-4">
+                <WakeoutButton asChild size="sm" variant="secondary">
+                  <Link to="/student/appeals/new">File score appeal</Link>
+                </WakeoutButton>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {isRetakeApproved && (
         <Card className="mb-6 border-amber bg-amber/10">

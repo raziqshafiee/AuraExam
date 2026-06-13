@@ -229,6 +229,17 @@ function ClassDetail() {
     });
     printTable(`${student.name} — Exam Report`, `${c.name} · ${c.code}`, headers, rows);
   }
+  function exportStudentListCSV() {
+    const headers = ["Name", "Status", "Enrolled"];
+    const rows = members.map((m: any) => [m.name, m.status, fmtEx(m.enrolledAt)]);
+    downloadCSV(`${c.code}-students`, buildCSV(headers, rows));
+  }
+  function exportStudentListPDF() {
+    const headers = ["Name", "Status", "Enrolled"];
+    const rows = members.map((m: any) => [m.name, m.status, fmtEx(m.enrolledAt)]);
+    printTable(`${c.name} — Student List`, `${c.code} · ${members.length} students`, headers, rows);
+  }
+
   async function exportAllExamsCSV() {
     const d = await ensureExportData(); if (!d) return;
     const headers = ["Exam", "Date", "Student", "Score", "Total", "%", "Status", "Flags", "Submitted"];
@@ -631,10 +642,7 @@ function ClassDetail() {
 
       {tab === "members" && (
         <Section title="Enrolled students" action={
-          <div className="flex gap-2 flex-wrap">
-            <ExportMenu label="Class roster" onCSV={exportRosterCSV} onPDF={exportRosterPDF} />
-            <ExportMenu label="All exams" onCSV={exportAllExamsCSV} onPDF={exportAllExamsPDF} />
-          </div>
+          <ExportMenu label="Student list" onCSV={exportStudentListCSV} onPDF={exportStudentListPDF} />
         }>
           {members.length === 0 ? (
             <Empty title="No students enrolled yet" hint="Students join using the class code." />
@@ -643,7 +651,7 @@ function ClassDetail() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs font-mono uppercase tracking-widest text-muted-foreground border-b-2 border-ink">
-                    <th className="py-3">Name</th><th>Status</th><th>Enrolled</th><th></th><th></th>
+                    <th className="py-3">Name</th><th>Status</th><th>Enrolled</th><th></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y-2 divide-ink/10">
@@ -656,7 +664,6 @@ function ClassDetail() {
                         </span>
                       </td>
                       <td className="text-xs font-mono text-muted-foreground">{fmtMY(m.enrolledAt, { dateStyle: "short" })}</td>
-                      <td><ExportMenu label="report" onCSV={() => exportStudentCSV({ id: m.studentId, name: m.name })} onPDF={() => exportStudentPDF({ id: m.studentId, name: m.name })} /></td>
                       <td className="text-right">
                         <button onClick={() => handleRemoveStudent(m.studentId, m.name)} className="text-muted-foreground hover:text-pink text-xs font-mono">Remove</button>
                       </td>
@@ -847,27 +854,9 @@ function ClassDetail() {
 
                     <div className="flex items-center gap-2 flex-wrap shrink-0">
                       {exam.status === "draft" && (
-                        <>
-                          <WakeoutButton asChild size="sm" variant="secondary">
-                            <Link to="/lecturer/exams/$examId/edit" params={{ examId: exam.id }}>Edit</Link>
-                          </WakeoutButton>
-                          <WakeoutButton
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => triggerConfirm({
-                              title: "Delete exam?",
-                              message: `"${exam.title}" will be permanently deleted.`,
-                              confirmLabel: "Delete",
-                              fn: async () => {
-                                await deleteExam({ data: exam.id });
-                                setExams((prev) => prev.filter((e: any) => e.id !== exam.id));
-                                toast.success("Exam deleted");
-                              },
-                            })}
-                          >
-                            Delete
-                          </WakeoutButton>
-                        </>
+                        <WakeoutButton asChild size="sm" variant="secondary">
+                          <Link to="/lecturer/exams/$examId/edit" params={{ examId: exam.id }}>Edit</Link>
+                        </WakeoutButton>
                       )}
                       {exam.status === "upcoming" && (
                         <>
@@ -902,6 +891,27 @@ function ClassDetail() {
                           <Link to="/lecturer/exams/$examId/results" params={{ examId: exam.id }}>Results →</Link>
                         </WakeoutButton>
                       )}
+                      {/* Delete is allowed at any status. For exams with student
+                          data (live/closed/graded) the dialog warns that scores
+                          will be destroyed. */}
+                      <WakeoutButton
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => triggerConfirm({
+                          title: "Delete exam?",
+                          message: ["live", "closed", "graded"].includes(exam.status)
+                            ? `"${exam.title}" already has student submissions. Deleting it permanently destroys all student answers, scores, and integrity flags. This cannot be undone.`
+                            : `"${exam.title}" will be permanently deleted. This cannot be undone.`,
+                          confirmLabel: "Delete",
+                          fn: async () => {
+                            await deleteExam({ data: exam.id });
+                            setExams((prev) => prev.filter((e: any) => e.id !== exam.id));
+                            toast.success("Exam deleted");
+                          },
+                        })}
+                      >
+                        Delete
+                      </WakeoutButton>
                     </div>
                   </div>
                 </Card>

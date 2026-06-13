@@ -78,6 +78,7 @@ const STATUS_COLORS: Record<string, string> = {
   submitted: "bg-sky",
   graded: "bg-lime",
   flagged: "bg-pink",
+  "not-answered": "bg-secondary",
 };
 
 function Results() {
@@ -108,7 +109,8 @@ function Results() {
       s.studentName, s.score ?? 0, s.total ?? 0, pct(s.score, s.total ?? 0),
       s.status, s.auto_score, Math.max(0, (s.score ?? 0) - s.auto_score), s.flags, fmtExport(s.submittedAt),
     ]);
-    printTable(`${exam.title} — Results`, `${exam.classCode} · ${subs.length} submissions`, headers, rows);
+    const realSubs = subs.filter((s) => s.status !== "not-answered");
+    printTable(`${exam.title} — Results`, `${exam.classCode} · ${realSubs.length} submissions`, headers, rows);
   }
 
   function exportSlipCSV(s: Submission) {
@@ -137,8 +139,9 @@ function Results() {
     printTable(`Result Slip — ${s.studentName}`, `${exam.title} · ${exam.classCode}`, headers, rows);
   }
 
-  const submitted = subs.filter((s) => s.status !== "in-progress");
+  const submitted = subs.filter((s) => s.status !== "in-progress" && s.status !== "not-answered");
   const inProgress = subs.filter((s) => s.status === "in-progress");
+  const notAnswered = subs.filter((s) => s.status === "not-answered");
   const flagged = subs.filter((s) => s.status === "flagged");
   const essayPending = subs.filter((s) =>
     s.essayAnswers.some((ea) => ea.score === null)
@@ -194,9 +197,10 @@ function Results() {
         <ExportMenu label="Export exam" onCSV={exportExamCSV} onPDF={exportExamPDF} />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
         <Stat label="Submitted" value={submitted.length} color="bg-lime" />
         <Stat label="In progress" value={inProgress.length} color="bg-amber" />
+        <Stat label="Not answered" value={notAnswered.length} color="bg-secondary" />
         <Stat label="Essays pending" value={essayPending.length} color="bg-violet" />
         <Stat label="Integrity flags" value={flagged.length} color="bg-pink" />
       </div>
@@ -219,6 +223,7 @@ function Results() {
           <option value="submitted">Submitted</option>
           <option value="graded">Graded</option>
           <option value="flagged">Flagged</option>
+          <option value="not-answered">Not answered</option>
         </select>
       </div>
 
@@ -240,52 +245,63 @@ function Results() {
               const matchSearch = !q || s.studentName.toLowerCase().includes(q);
               const matchStatus = statusFilter === "all" || s.status === statusFilter;
               return matchSearch && matchStatus;
-            }).map((s) => (
-              <tr key={s.id} className={s.status === "flagged" ? "bg-pink/10" : ""}>
-                <td className="py-3 font-semibold">{s.studentName}</td>
-                <td>
-                  <span
-                    className={`px-2 py-0.5 rounded-full border-2 border-ink text-xs font-mono uppercase ${STATUS_COLORS[s.status] ?? "bg-card"}`}
-                  >
-                    {s.status}
-                  </span>
-                </td>
-                <td className="py-3">
-                  {s.total ? (
-                    <div className="space-y-0.5">
-                      <div className="font-mono font-bold text-sm">
-                        {s.score ?? 0} / {s.total} pts
-                      </div>
-                      <div className="text-xs font-mono text-muted-foreground">
-                        {Math.round(((s.score ?? 0) / s.total) * 100)}%
-                      </div>
-                    </div>
-                  ) : (
-                    <span className="font-mono text-muted-foreground">—</span>
-                  )}
-                </td>
-                <td className="hidden md:table-cell text-xs font-mono text-muted-foreground">
-                  <div>MCQ/TF: {s.auto_score ?? 0} pts</div>
-                  <div>Essay: {(s.score ?? 0) - (s.auto_score ?? 0)} pts</div>
-                </td>
-                <td className="font-mono">
-                  {s.flags > 0 ? (
-                    <span className="flex items-center gap-1 text-pink-600 font-bold">
-                      <AlertTriangle className="w-3.5 h-3.5" /> {s.flags}
+            }).map((s) => {
+              const isNotAnswered = s.status === "not-answered";
+              return (
+                <tr key={s.id} className={s.status === "flagged" ? "bg-pink/10" : isNotAnswered ? "opacity-60" : ""}>
+                  <td className="py-3 font-semibold">{s.studentName}</td>
+                  <td>
+                    <span
+                      className={`px-2 py-0.5 rounded-full border-2 border-ink text-xs font-mono uppercase ${STATUS_COLORS[s.status] ?? "bg-card"}`}
+                    >
+                      {s.status}
                     </span>
-                  ) : (
-                    "0"
-                  )}
-                </td>
-                <td>
-                  <ExportMenu
-                    label="slip"
-                    onCSV={() => exportSlipCSV(s)}
-                    onPDF={() => exportSlipPDF(s)}
-                  />
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="py-3">
+                    {isNotAnswered ? (
+                      <span className="font-mono text-muted-foreground">—</span>
+                    ) : s.total ? (
+                      <div className="space-y-0.5">
+                        <div className="font-mono font-bold text-sm">
+                          {s.score ?? 0} / {s.total} pts
+                        </div>
+                        <div className="text-xs font-mono text-muted-foreground">
+                          {Math.round(((s.score ?? 0) / s.total) * 100)}%
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="font-mono text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="hidden md:table-cell text-xs font-mono text-muted-foreground">
+                    {isNotAnswered ? "—" : (
+                      <>
+                        <div>MCQ/TF: {s.auto_score ?? 0} pts</div>
+                        <div>Essay: {(s.score ?? 0) - (s.auto_score ?? 0)} pts</div>
+                      </>
+                    )}
+                  </td>
+                  <td className="font-mono">
+                    {s.flags > 0 ? (
+                      <span className="flex items-center gap-1 text-pink-600 font-bold">
+                        <AlertTriangle className="w-3.5 h-3.5" /> {s.flags}
+                      </span>
+                    ) : (
+                      "0"
+                    )}
+                  </td>
+                  <td>
+                    {!isNotAnswered && (
+                      <ExportMenu
+                        label="slip"
+                        onCSV={() => exportSlipCSV(s)}
+                        onPDF={() => exportSlipPDF(s)}
+                      />
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </Card>

@@ -150,7 +150,7 @@ function QuestionBank() {
                   </WakeoutButton>
                   <WakeoutButton
                     size="sm"
-                    variant="ghost"
+                    variant="destructive"
                     disabled={deleting === q.id}
                     onClick={() => handleDelete(q.id)}
                   >

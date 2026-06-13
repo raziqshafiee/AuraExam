@@ -27,7 +27,7 @@ function LecturerExams() {
   // Keep local state in sync when the loader re-runs (window focus, navigation).
   useEffect(() => { setExams(loaded); }, [loaded]);
   const [working, setWorking] = useState<string | null>(null);
-  const [pending, setPending] = useState<{ type: "delete" | "unpublish"; id: string } | null>(null);
+  const [pending, setPending] = useState<{ type: "delete" | "unpublish"; id: string; status: string } | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
@@ -63,7 +63,9 @@ function LecturerExams() {
   }
 
   const canEdit = (s: string) => s === "draft" || s === "upcoming";
-  const canDelete = (s: string) => s === "draft" || s === "upcoming";
+  // Deletion is allowed at any status. For live/closed/graded exams this also
+  // destroys student submissions and scores — the confirm dialog warns first.
+  const canDelete = (_s: string) => true;
   const canUnpublish = (s: string) => s === "upcoming";
   const canMonitor = (s: string) => s === "upcoming" || s === "live" || s === "closed";
   const canResults = (s: string) => s === "upcoming" || s === "live" || s === "closed" || s === "graded";
@@ -151,7 +153,7 @@ function LecturerExams() {
                 <button
                   type="button"
                   disabled={working === e.id}
-                  onClick={() => setPending({ type: "unpublish", id: e.id })}
+                  onClick={() => setPending({ type: "unpublish", id: e.id, status: e.status })}
                   className="text-xs font-mono text-amber-700 hover:text-amber-900 border border-amber-400 rounded-lg px-2.5 py-1 disabled:opacity-50"
                 >
                   {working === e.id ? "…" : "Unpublish"}
@@ -159,7 +161,7 @@ function LecturerExams() {
               )}
 
               {canMonitor(e.status) && (
-                <WakeoutButton asChild size="sm" variant="ghost">
+                <WakeoutButton asChild size="sm" variant="violet">
                   <Link to="/lecturer/exams/$examId/monitor" params={{ examId: e.id }}>
                     Monitor
                   </Link>
@@ -167,7 +169,7 @@ function LecturerExams() {
               )}
 
               {canResults(e.status) && (
-                <WakeoutButton asChild size="sm" variant="ghost">
+                <WakeoutButton asChild size="sm" variant="sky">
                   <Link to="/lecturer/exams/$examId/results" params={{ examId: e.id }}>
                     Results
                   </Link>
@@ -177,9 +179,9 @@ function LecturerExams() {
               {canDelete(e.status) && (
                 <button
                   type="button"
-                  onClick={() => setPending({ type: "delete", id: e.id })}
+                  onClick={() => setPending({ type: "delete", id: e.id, status: e.status })}
                   disabled={working === e.id}
-                  className="text-xs font-mono text-ink/40 hover:text-red-500 transition-colors disabled:opacity-50 px-2 py-1"
+                  className="text-xs font-mono font-bold text-white bg-red-500 border-2 border-ink rounded-full px-3 py-1 hover:bg-red-600 transition-colors disabled:opacity-50"
                 >
                   {working === e.id ? "…" : "Delete"}
                 </button>
@@ -194,7 +196,9 @@ function LecturerExams() {
         title={pending?.type === "delete" ? "Delete exam?" : "Unpublish exam?"}
         message={
           pending?.type === "delete"
-            ? "This cannot be undone. All questions and settings will be permanently removed."
+            ? ["live", "closed", "graded"].includes(pending?.status ?? "")
+              ? "This cannot be undone. This exam already has student submissions — all student answers, scores, and integrity flags will be permanently destroyed along with the exam."
+              : "This cannot be undone. All questions and settings will be permanently removed."
             : "Students will no longer see this exam. It will return to draft status and can be republished."
         }
         confirmLabel={pending?.type === "delete" ? "Delete" : "Unpublish"}

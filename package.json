@@ -29,7 +29,8 @@
     "migrate:proctoring": "tsx scripts/migrate-proctoring.ts",
     "migrate:exam-lifecycle": "tsx scripts/migrate-exam-lifecycle.ts",
     "migrate:notifications": "tsx scripts/migrate-notifications.ts",
-    "migrate:grade-config": "tsx scripts/migrate-grade-config.ts"
+    "migrate:grade-config": "tsx scripts/migrate-grade-config.ts",
+    "migrate:exam-shuffle": "tsx scripts/migrate-exam-shuffle.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",

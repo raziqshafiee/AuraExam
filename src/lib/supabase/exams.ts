@@ -1,10 +1,156 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
+import { createAdminClient } from "./admin-client";
 import { pushNotification } from "./notifications";
 import { writeAudit } from "./audit";
 import { MY_TZ } from "@/lib/datetime";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
+
+// Grade a set of answers against the exam's questions. Pure (no DB). Returns the
+// auto-score (MCQ+TF) and the answer rows to persist. Essays are stored with
+// score: null (pending lecturer grading). Shared by submitExam (client answers)
+// and the force-finalize-on-close path (autosaved answers). A row is produced
+// only for genuinely answered questions, so the returned ids double as the
+// "keep" set for reconciling away answers the student later cleared.
+function gradeAnswers(
+  eqs: any[],
+  submissionId: string,
+  answers: Record<string, string>
+): { score: number; rows: any[] } {
+  let score = 0;
+  const rows: any[] = [];
+  for (const eq of eqs ?? []) {
+    const q = eq.questions;
+    const studentAnswer = answers[q.id] ?? "";
+
+    if (q.type === "MCQ") {
+      const letterMap: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 };
+      const studentIdx = letterMap[studentAnswer];
+      // Guard with studentIdx (not studentAnswer) so invalid letters like "E"
+      // are not stored — only A/B/C/D produce a valid row.
+      if (studentIdx !== undefined) {
+        const pts = studentIdx === q.meta?.correct ? (q.points ?? 1) : 0;
+        score += pts;
+        rows.push({ submission_id: submissionId, question_id: q.id, answer: studentAnswer, score: pts });
+      }
+    } else if (q.type === "TF") {
+      if (studentAnswer !== "") {
+        const studentBool = studentAnswer === "True";
+        const pts = studentBool === q.meta?.correct ? (q.points ?? 1) : 0;
+        score += pts;
+        rows.push({ submission_id: submissionId, question_id: q.id, answer: studentAnswer, score: pts });
+      }
+    } else if (q.type === "ESSAY") {
+      if (studentAnswer.trim()) {
+        rows.push({ submission_id: submissionId, question_id: q.id, answer: studentAnswer.slice(0, 5000), score: null });
+      }
+    }
+  }
+  return { score, rows };
+}
+
+// Persist answer rows for a submission and reconcile away any previously-saved
+// answers the student has since cleared. Uses the service-role client because
+// the essay_answers UPDATE policy is lecturer-only — student-driven writes
+// (autosave + self-submit) must bypass RLS. Callers are responsible for
+// authorizing the submission (ownership + in-progress) before calling this.
+async function persistAnswers(
+  admin: ReturnType<typeof createAdminClient>,
+  submissionId: string,
+  rows: any[]
+) {
+  if (rows.length > 0) {
+    const keepIds = rows.map((r) => r.question_id);
+    const { error } = await (admin as any)
+      .from("essay_answers")
+      .upsert(rows, { onConflict: "submission_id,question_id" });
+    if (error) throw new Error(error.message);
+    await (admin as any)
+      .from("essay_answers")
+      .delete()
+      .eq("submission_id", submissionId)
+      .not("question_id", "in", `(${keepIds.join(",")})`);
+  } else {
+    await (admin as any)
+      .from("essay_answers")
+      .delete()
+      .eq("submission_id", submissionId);
+  }
+}
+
+// ── Per-student exam shuffle ────────────────────────────────────────────────
+// Deterministic, seeded shuffle so a student's layout (question order + MCQ
+// option order) is stable across refreshes WITHOUT persisting a permutation:
+// the same submissionId always reproduces the same arrangement. The same single
+// source of truth is used to serve the shuffled paper AND to translate answers
+// back to canonical order before storing/grading — so the two can never drift.
+
+const LETTERS = ["A", "B", "C", "D"];
+
+function hashSeed(str: string): number {
+  // FNV-1a
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// A deterministic permutation of [0..n) for the given seed (Fisher–Yates).
+function seededOrder(n: number, seed: number): number[] {
+  const rand = mulberry32(seed);
+  const arr = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// display→original option index map for one MCQ. perm[displayIdx] = originalIdx.
+function optionPermFor(submissionId: string, questionId: string, optionCount: number): number[] {
+  return seededOrder(optionCount, hashSeed(`${submissionId}:opt:${questionId}`));
+}
+
+// Translate a display-space answers map (as the student saw it under shuffle)
+// into canonical (original) option order, so stored answers + grading are
+// independent of each student's layout. Only MCQ letters change; TF/essay pass
+// through. No-op when shuffle is off.
+function toCanonicalAnswers(
+  submissionId: string,
+  eqs: any[],
+  shuffleOn: boolean,
+  answers: Record<string, string>
+): Record<string, string> {
+  if (!shuffleOn) return answers;
+  const out: Record<string, string> = { ...answers };
+  for (const eq of eqs ?? []) {
+    const q = eq.questions;
+    if (q.type !== "MCQ") continue;
+    const ans = answers[q.id];
+    if (!ans) continue;
+    const optionCount = Array.isArray(q.meta?.options) ? q.meta.options.length : 4;
+    const perm = optionPermFor(submissionId, q.id, optionCount);
+    const displayIdx = LETTERS.indexOf(ans);
+    // Out-of-range (e.g. a placeholder 4th option that doesn't exist) → leave
+    // as-is; it simply won't match the correct index and scores 0.
+    if (displayIdx < 0 || displayIdx >= perm.length) continue;
+    out[q.id] = LETTERS[perm[displayIdx]] ?? ans;
+  }
+  return out;
+}
 
 // Types
 export type ExamStatus = "draft" | "upcoming" | "live" | "closed" | "graded";
@@ -25,6 +171,7 @@ export type ExamListItem = {
 };
 
 export type ExamDetail = ExamListItem & {
+  shuffle: boolean;
   questions: Array<{
     id: string;
     type: "MCQ" | "TF" | "ESSAY";
@@ -44,6 +191,7 @@ type CreateExamInput = {
   end_time: string;
   duration: number;
   require_camera: boolean;
+  shuffle: boolean;
   status: ExamStatus;
   question_ids: string[];
 };
@@ -141,6 +289,7 @@ export const getExam = createServerFn({ method: "GET" })
       end_time: exam.end_time,
       duration: exam.duration,
       require_camera: exam.require_camera ?? false,
+      shuffle: exam.shuffle ?? false,
       questions_count: exam.questions_count,
       status: exam.status,
       created_at: exam.created_at,
@@ -167,6 +316,7 @@ export const createExam = createServerFn({ method: "POST" })
         end_time: data.end_time,
         duration: data.duration,
         require_camera: data.require_camera,
+        shuffle: data.shuffle,
         status: data.status,
         questions_count: data.question_ids.length,
         created_by: user.id,
@@ -222,9 +372,11 @@ export const updateExam = createServerFn({ method: "POST" })
     if (current?.status === "upcoming") {
       // Once published, only cosmetic fields may change. Questions, schedule,
       // duration, and class are committed — students are already expecting them.
+      // shuffle is layout-only (stored answers are canonical) so it is safe to
+      // toggle pre-start.
       const { error } = await db(supabase)
         .from("exams")
-        .update({ title: data.title, require_camera: data.require_camera })
+        .update({ title: data.title, require_camera: data.require_camera, shuffle: data.shuffle })
         .eq("id", data.id);
       if (error) throw new Error(error.message);
       return { id: data.id as string };
@@ -240,6 +392,7 @@ export const updateExam = createServerFn({ method: "POST" })
         end_time: data.end_time,
         duration: data.duration,
         require_camera: data.require_camera,
+        shuffle: data.shuffle,
         status: data.status,
         questions_count: data.question_ids.length,
       })
@@ -314,23 +467,11 @@ export const deleteExam = createServerFn({ method: "POST" })
       throw new Error("Forbidden — you do not own this exam");
     }
 
-    if (["live", "closed", "graded"].includes(exam?.status)) {
-      throw new Error(
-        `Cannot delete a ${exam.status} exam — student data exists`
-      );
-    }
-
-    const { count } = await db(supabase)
-      .from("submissions")
-      .select("id", { count: "exact", head: true })
-      .eq("exam_id", id);
-
-    if (count && count > 0) {
-      throw new Error(
-        "Cannot delete an exam that already has student submissions"
-      );
-    }
-
+    // Deletion is permitted at any status, including live/closed/graded exams
+    // that already hold student submissions. The database cascades the delete:
+    // submissions → essay_answers + flag_reasons are removed, and appeals have
+    // their submission_id set null (the appeal rows survive). This is
+    // irreversible and destroys student scores — the UI warns before calling it.
     const { error } = await db(supabase).from("exams").delete().eq("id", id);
     if (error) throw new Error(error.message);
 
@@ -410,7 +551,7 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
 
     const { data: exam, error: examErr } = await db(supabase)
       .from("exams")
-      .select("id, title, status, created_by, classes(code, name)")
+      .select("id, title, status, class_id, created_by, classes(code, name)")
       .eq("id", examId)
       .single();
 
@@ -419,7 +560,7 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
 
     const { data: subs, error: subErr } = await db(supabase)
       .from("submissions")
-      .select("id, status, score, auto_score, flags, appeal_required, submitted_at, profiles!student_id(name)")
+      .select("id, student_id, status, score, auto_score, flags, appeal_required, submitted_at, profiles!student_id(name)")
       .eq("exam_id", examId);
 
     if (subErr) throw new Error(subErr.message);
@@ -433,6 +574,12 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
       (sum: number, eq: any) => sum + (eq.questions?.points ?? 0),
       0
     );
+
+    // Fetch all enrolled students so we can show who didn't answer
+    const { data: enrollments } = await db(supabase)
+      .from("class_enrollments")
+      .select("student_id, profiles!student_id(name)")
+      .eq("class_id", exam.class_id);
 
     const subIds = (subs ?? []).map((s: any) => s.id);
 
@@ -454,31 +601,51 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
       essayAnswers = (ea ?? []).filter((e: any) => e.questions?.type === "ESSAY");
     }
 
-    const submissions = (subs ?? []).map((s: any) => ({
-      id: s.id,
-      studentName: s.profiles?.name ?? "Unknown",
-      status: s.status,
-      score: s.score,
-      auto_score: s.auto_score ?? 0,
-      total: examTotal,
-      flags: s.flags ?? 0,
-      submittedAt: s.submitted_at,
-      flagReasons: flagReasons
-        .filter((fr) => fr.submission_id === s.id)
-        .map((fr) => ({ time: fr.time, type: fr.type, label: fr.label })),
-      essayAnswers: essayAnswers
-        .filter((ea) => ea.submission_id === s.id)
-        .map((ea) => ({
-          id: ea.id,
-          question_id: ea.question_id,
-          questionText: ea.questions?.text ?? "",
-          maxPoints: ea.questions?.points ?? 0,
-          modelAnswer: (ea.questions?.meta as any)?.model_answer ?? null,
-          rubric: (ea.questions?.meta as any)?.rubric ?? null,
-          answer: ea.answer,
-          score: ea.score,
-        })),
-    }));
+    const submittedStudentIds = new Set((subs ?? []).map((s: any) => s.student_id));
+
+    const notAnsweredEntries = (enrollments ?? [])
+      .filter((e: any) => !submittedStudentIds.has(e.student_id))
+      .map((e: any) => ({
+        id: `not-answered-${e.student_id}`,
+        studentName: (e.profiles as any)?.name ?? "Unknown",
+        status: "not-answered",
+        score: null,
+        auto_score: 0,
+        total: examTotal,
+        flags: 0,
+        submittedAt: null,
+        flagReasons: [],
+        essayAnswers: [],
+      }));
+
+    const submissions = [
+      ...(subs ?? []).map((s: any) => ({
+        id: s.id,
+        studentName: s.profiles?.name ?? "Unknown",
+        status: s.status,
+        score: s.score,
+        auto_score: s.auto_score ?? 0,
+        total: examTotal,
+        flags: s.flags ?? 0,
+        submittedAt: s.submitted_at,
+        flagReasons: flagReasons
+          .filter((fr) => fr.submission_id === s.id)
+          .map((fr) => ({ time: fr.time, type: fr.type, label: fr.label })),
+        essayAnswers: essayAnswers
+          .filter((ea) => ea.submission_id === s.id)
+          .map((ea) => ({
+            id: ea.id,
+            question_id: ea.question_id,
+            questionText: ea.questions?.text ?? "",
+            maxPoints: ea.questions?.points ?? 0,
+            modelAnswer: (ea.questions?.meta as any)?.model_answer ?? null,
+            rubric: (ea.questions?.meta as any)?.rubric ?? null,
+            answer: ea.answer,
+            score: ea.score,
+          })),
+      })),
+      ...notAnsweredEntries,
+    ];
 
     return {
       exam: {
@@ -772,6 +939,16 @@ export const getStudentExamLobby = createServerFn({ method: "GET" })
       .eq("student_id", user.id)
       .maybeSingle();
 
+    // Retake-approved students may enter the lobby even after the window closes.
+    const isRetake = sub?.status === "retake-approved";
+    if (!isRetake) {
+      const ended =
+        exam.status === "closed" ||
+        exam.status === "graded" ||
+        (exam.end_time && new Date(exam.end_time) < new Date());
+      if (ended) throw new Error("This exam has ended");
+    }
+
     return {
       id: exam.id,
       title: exam.title,
@@ -799,7 +976,7 @@ export const getExamForTaking = createServerFn({ method: "GET" })
 
     const { data: exam, error } = await db(supabase)
       .from("exams")
-      .select("id, title, duration, end_time, require_camera, class_id, classes(code)")
+      .select("id, title, duration, end_time, require_camera, shuffle, class_id, classes(code)")
       .eq("id", examId)
       .single();
 
@@ -861,7 +1038,7 @@ export const getExamForTaking = createServerFn({ method: "GET" })
       return null; // TF renders True/False; ESSAY is a free-text box — neither needs meta
     };
 
-    const questions = (eqs ?? []).map((eq: any) => ({
+    let questions = (eqs ?? []).map((eq: any) => ({
       id: eq.questions.id,
       type: eq.questions.type,
       text: eq.questions.text,
@@ -869,6 +1046,23 @@ export const getExamForTaking = createServerFn({ method: "GET" })
       meta: sanitizeMeta(eq.questions.type, eq.questions.meta),
       order_index: eq.order_index,
     }));
+
+    // Per-student shuffle (when enabled and an attempt exists): reorder the
+    // questions and each MCQ's options, seeded by submissionId so the layout is
+    // stable across refreshes. Answers are translated back to canonical order on
+    // save/grade, so this is purely a display arrangement.
+    if (exam.shuffle && sub?.id) {
+      const order = seededOrder(questions.length, hashSeed(`${sub.id}:q`));
+      questions = order.map((origIdx) => {
+        const q = questions[origIdx];
+        const opts = (q.meta as any)?.options;
+        if (q.type === "MCQ" && Array.isArray(opts)) {
+          const perm = optionPermFor(sub.id, q.id, opts.length);
+          return { ...q, meta: { ...q.meta, options: perm.map((oi) => opts[oi]) } };
+        }
+        return q;
+      });
+    }
 
     return {
       exam: {
@@ -1007,6 +1201,66 @@ export const startExam = createServerFn({ method: "POST" })
     return { submissionId: sub.id as string };
   });
 
+// POST: Autosave in-progress answers
+// Called periodically and on tab-hide while a student is taking an exam, so the
+// server always holds the latest answers. This is what makes timeout/close/crash
+// recoverable — without it the server has nothing until the final submit.
+export const saveExamProgress = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: { submissionId: string; answers: Record<string, string> }) => data
+  )
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    // Ownership + state gate read under the caller's RLS context. Only an
+    // in-progress attempt belonging to this user may be autosaved.
+    const { data: sub } = await db(supabase)
+      .from("submissions")
+      .select("id, status, exam_id, exams(shuffle)")
+      .eq("id", data.submissionId)
+      .eq("student_id", user.id)
+      .maybeSingle();
+
+    if (!sub || sub.status !== "in-progress") {
+      return { saved: false as const };
+    }
+
+    // Drafts must be stored in canonical option order too, so that a
+    // grade-on-close (which reads these rows) scores them correctly. Only fetch
+    // question meta for the translation when the exam actually shuffles.
+    let answers = data.answers ?? {};
+    if ((sub as any).exams?.shuffle) {
+      const { data: eqs } = await db(supabase)
+        .from("exam_questions")
+        .select("questions(id, type, meta)")
+        .eq("exam_id", sub.exam_id);
+      answers = toCanonicalAnswers(data.submissionId, eqs ?? [], true, answers);
+    }
+
+    // Store raw answers as ungraded drafts (score: null). The authoritative
+    // grade is always recomputed at submit / on-close from the question meta —
+    // we never trust or persist a client-side score, and storing null keeps
+    // correctness out of the mid-exam row set.
+    const rows: any[] = [];
+    for (const [questionId, raw] of Object.entries(answers)) {
+      const answer = (raw ?? "").toString();
+      if (!answer.trim()) continue;
+      rows.push({
+        submission_id: data.submissionId,
+        question_id: questionId,
+        answer: answer.slice(0, 5000),
+        score: null,
+      });
+    }
+
+    await persistAnswers(createAdminClient(), data.submissionId, rows);
+    return { saved: true as const };
+  });
+
 // POST: Submit exam
 export const submitExam = createServerFn({ method: "POST" })
   .inputValidator(
@@ -1044,7 +1298,7 @@ export const submitExam = createServerFn({ method: "POST" })
 
     const { data: examRow } = await db(supabase)
       .from("exams")
-      .select("duration, end_time")
+      .select("duration, end_time, shuffle")
       .eq("id", data.examId)
       .single();
 
@@ -1069,49 +1323,27 @@ export const submitExam = createServerFn({ method: "POST" })
       .select("questions(id, type, points, meta)")
       .eq("exam_id", data.examId);
 
-    let score = 0;
-    const allInserts: any[] = [];
+    // Translate the student's display-space answers (shuffled options) back to
+    // canonical order before grading, so stored answers are layout-independent.
+    const canonicalAnswers = toCanonicalAnswers(
+      data.submissionId,
+      eqs ?? [],
+      examRow?.shuffle ?? false,
+      data.answers
+    );
+    const { score, rows: allInserts } = gradeAnswers(eqs ?? [], data.submissionId, canonicalAnswers);
 
-    for (const eq of eqs ?? []) {
-      const q = eq.questions;
-      const studentAnswer = data.answers[q.id] ?? "";
-
-      if (q.type === "MCQ") {
-        const letterMap: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 };
-        const studentIdx = letterMap[studentAnswer];
-        const pts = studentIdx !== undefined && studentIdx === q.meta?.correct ? (q.points ?? 1) : 0;
-        if (studentIdx !== undefined) score += pts;
-        // Guard with studentIdx (not studentAnswer) so invalid letters like "E"
-        // are not stored — only A/B/C/D produce a valid row.
-        if (studentIdx !== undefined) {
-          allInserts.push({ submission_id: data.submissionId, question_id: q.id, answer: studentAnswer, score: pts });
-        }
-      } else if (q.type === "TF") {
-        const studentBool = studentAnswer === "True";
-        const pts = studentAnswer !== "" && studentBool === q.meta?.correct ? (q.points ?? 1) : 0;
-        if (studentAnswer !== "") score += pts;
-        if (studentAnswer) {
-          allInserts.push({ submission_id: data.submissionId, question_id: q.id, answer: studentAnswer, score: pts });
-        }
-      } else if (q.type === "ESSAY") {
-        if (studentAnswer.trim()) {
-          const truncated = studentAnswer.slice(0, 5000);
-          allInserts.push({ submission_id: data.submissionId, question_id: q.id, answer: truncated, score: null });
-        }
-      }
-    }
-
-    if (allInserts.length > 0) {
-      const { error: insertErr } = await db(supabase).from("essay_answers").upsert(allInserts, { onConflict: "submission_id,question_id" });
-      if (insertErr) throw new Error(insertErr.message);
-    }
+    // Persist final answers via the service-role client and reconcile away any
+    // autosaved drafts the student cleared before submitting. Authorization is
+    // already enforced above (submission belongs to user + status in-progress).
+    await persistAnswers(createAdminClient(), data.submissionId, allInserts);
 
     // A submission that lands past the server-computed deadline is still graded
     // on the answers received (we never silently discard a student's work), but
     // it is flagged for lecturer review via a flag reason + appeal_required.
-    // NOTE: answers are only transmitted at submit time, so the server cannot
-    // reconstruct a snapshot of the paper as it stood at the deadline — human
-    // review is the backstop for anyone who exploited extra time.
+    // NOTE: autosave gives periodic snapshots, not an exact at-the-deadline
+    // capture, so human review remains the backstop for anyone who exploited
+    // extra time.
     if (lateSubmission) {
       await db(supabase)
         .from("flag_reasons")
@@ -1151,13 +1383,13 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
 
     const { data: exam, error: examErr } = await db(supabase)
       .from("exams")
-      .select("id, title, classes(code)")
+      .select("id, title, status, end_time, classes(code)")
       .eq("id", examId)
       .single();
 
     if (examErr) throw new Error(examErr.message);
 
-    const { data: sub, error: subErr } = await db(supabase)
+    const { data: subData, error: subErr } = await db(supabase)
       .from("submissions")
       .select("id, status, score, flags, submitted_at")
       .eq("exam_id", examId)
@@ -1165,7 +1397,82 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
       .maybeSingle();
 
     if (subErr) throw new Error(subErr.message);
-    if (!sub) throw new Error("No submission found for this exam");
+
+    // Student never started — return a virtual missed result for ended exams
+    if (!subData) {
+      const examEnded =
+        exam.status === "closed" ||
+        exam.status === "graded" ||
+        (exam.end_time && new Date(exam.end_time) < new Date());
+      if (!examEnded) throw new Error("No submission found for this exam");
+
+      const { data: pointRows } = await db(supabase)
+        .from("exam_questions")
+        .select("questions(points)")
+        .eq("exam_id", examId);
+      const missedTotal = (pointRows ?? []).reduce(
+        (sum: number, eq: any) => sum + (eq.questions?.points ?? 0),
+        0
+      );
+
+      return {
+        exam: { id: exam.id, title: exam.title, classCode: exam.classes?.code ?? "" },
+        submission: {
+          id: null, status: "submitted", score: 0, total: missedTotal,
+          flags: 0, submittedAt: null, forceSubmitted: false, missed: true, flagReasons: [],
+        },
+        review: [],
+      };
+    }
+
+    let sub: any = subData;
+    let forceSubmitted = false;
+
+    // Force-finalize in-progress submissions when the exam window has closed.
+    // Autosave keeps the student's latest answers on the server, so we grade
+    // whatever was saved rather than discarding it as a zero. A student who
+    // answered but never clicked Submit keeps their marks; only a genuinely
+    // empty attempt is reported as "no answers" (forceSubmitted = true).
+    if (sub.status === "in-progress") {
+      const examEnded =
+        exam.status === "closed" ||
+        exam.status === "graded" ||
+        (exam.end_time && new Date(exam.end_time) < new Date());
+      if (examEnded) {
+        const [eqRes, savedRes] = await Promise.all([
+          db(supabase)
+            .from("exam_questions")
+            .select("questions(id, type, points, meta)")
+            .eq("exam_id", examId),
+          db(supabase)
+            .from("essay_answers")
+            .select("question_id, answer")
+            .eq("submission_id", sub.id),
+        ]);
+
+        // Reconstruct the answers map from the autosaved drafts, then grade.
+        const savedAnswers: Record<string, string> = {};
+        for (const row of savedRes.data ?? []) {
+          savedAnswers[row.question_id] = row.answer ?? "";
+        }
+        const { score: closedScore, rows: gradedRows } = gradeAnswers(
+          eqRes.data ?? [],
+          sub.id,
+          savedAnswers
+        );
+
+        // Re-persist with computed MCQ/TF scores (drafts were stored score: null).
+        await persistAnswers(createAdminClient(), sub.id, gradedRows);
+
+        const finalizedAt = new Date().toISOString();
+        await db(supabase)
+          .from("submissions")
+          .update({ status: "submitted", score: closedScore, auto_score: closedScore, submitted_at: finalizedAt })
+          .eq("id", sub.id);
+        sub = { ...sub, status: "submitted", score: closedScore, submitted_at: finalizedAt };
+        forceSubmitted = gradedRows.length === 0;
+      }
+    }
 
     // Compute true total from question points
     const { data: pointRows } = await db(supabase)
@@ -1231,6 +1538,8 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
         total: examTotal,
         flags: sub.flags ?? 0,
         submittedAt: sub.submitted_at,
+        forceSubmitted,
+        missed: false,
         flagReasons: (fr ?? []).map((f: any) => ({
           time: f.time,
           type: f.type,

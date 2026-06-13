@@ -1,9 +1,9 @@
-import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
-import { type ReactNode } from "react";
+import { Link, useRouterState, useNavigate, useMatches } from "@tanstack/react-router";
+import { type ReactNode, Fragment } from "react";
 import { Logo } from "./logo";
 import { useAuthUser, signOut, type Role } from "@/lib/auth";
 import {
-  Bell, LogOut, User, ChevronDown, Menu,
+  Bell, LogOut, User, ChevronDown, ChevronRight, Menu,
   LayoutDashboard, BookOpen, FileText, Library, Scale,
   Users, ScrollText, Shield, ShieldAlert,
   type LucideIcon,
@@ -166,6 +166,81 @@ function BottomNav({ role, pathname, badges }: { role: Role; pathname: string; b
   );
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const SEGMENT_LABEL: Record<string, string> = {
+  student: "Dashboard", lecturer: "Dashboard", admin: "Dashboard",
+  classes: "Classes", exams: "Exams", "question-bank": "Question Bank",
+  appeals: "Appeals", notifications: "Inbox", profile: "Profile",
+  users: "Users", "audit-log": "Audit Log", integrity: "Integrity",
+  pdpa: "PDPA", settings: "Settings",
+  new: "New Exam", edit: "Edit", results: "Results",
+  monitor: "Monitor", lobby: "Lobby", result: "Result",
+  "submit-confirm": "Submit", take: "Taking Exam",
+};
+
+function findEntityName(loaderDataList: unknown[], prevSeg: string): string | null {
+  for (const data of loaderDataList) {
+    if (!data || typeof data !== "object") continue;
+    const d = data as Record<string, any>;
+    if (prevSeg === "classes") {
+      if (d.name) return d.name;
+      if (d.code) return d.code;
+    }
+    if (prevSeg === "exams" || prevSeg === "question-bank") {
+      if (d.exam?.title) return d.exam.title;
+      if (d.title) return d.title;
+    }
+  }
+  return null;
+}
+
+function Breadcrumbs() {
+  const matches = useMatches();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  const loaderDataList = matches.map((m) => (m as any).loaderData);
+  const segments = pathname.split("/").filter(Boolean);
+
+  const crumbs: { label: string; to: string }[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const to = "/" + segments.slice(0, i + 1).join("/");
+    if (UUID_RE.test(seg)) {
+      const name = findEntityName(loaderDataList, segments[i - 1] ?? "");
+      if (name) crumbs.push({ label: name, to });
+      continue;
+    }
+    const label = SEGMENT_LABEL[seg];
+    if (label) crumbs.push({ label, to });
+  }
+
+  if (crumbs.length <= 1) return null;
+
+  return (
+    <nav className="hidden md:flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
+      {crumbs.map((crumb, i) => (
+        <Fragment key={crumb.to}>
+          {i > 0 && <ChevronRight className="w-3 h-3 shrink-0 text-ink/40" />}
+          {i === crumbs.length - 1 ? (
+            <span className="text-sm font-semibold text-ink truncate max-w-[200px]">
+              {crumb.label}
+            </span>
+          ) : (
+            <Link
+              to={crumb.to as any}
+              className="text-sm text-muted-foreground hover:text-ink transition-colors shrink-0 max-w-[140px] truncate"
+            >
+              {crumb.label}
+            </Link>
+          )}
+        </Fragment>
+      ))}
+    </nav>
+  );
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, loading } = useAuthUser();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -264,6 +339,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="sticky top-0 z-30 h-14 px-4 md:px-6 border-b-2 border-ink bg-background/85 backdrop-blur flex items-center gap-3">
           <div className="md:hidden"><Logo to={`/${role}`} /></div>
+          <Breadcrumbs />
           <div className="ml-auto flex items-center gap-2">
             {/* Bell — mobile shortcut (sidebar hidden on mobile) */}
             {role !== "admin" && (

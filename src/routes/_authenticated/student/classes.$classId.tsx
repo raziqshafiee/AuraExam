@@ -455,25 +455,34 @@ function ClassDetail() {
             <Empty title="No exams scheduled yet" />
           ) : (
             <div className="grid md:grid-cols-2 gap-4">
-              {classExams.map((e: any) => (
-                <Card key={e.id}>
-                  <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
-                    {e.status}
-                  </div>
-                  <div className="font-display font-bold text-lg mt-1">{e.title}</div>
-                  <div className="text-sm text-muted-foreground mt-0.5">
-                    {e.questions_count || 0} questions · {e.duration} min
-                  </div>
-                  <div className="text-xs font-mono text-muted-foreground mt-1">
-                    {fmtMY(e.start_time, { dateStyle: "medium", timeStyle: "short" })}
-                  </div>
-                  <WakeoutButton asChild size="sm" className="mt-3" variant="secondary">
-                    <Link to="/student/exams/$examId/lobby" params={{ examId: e.id }}>
-                      Open →
-                    </Link>
-                  </WakeoutButton>
-                </Card>
-              ))}
+              {classExams.map((e: any) => {
+                const examEnded = e.status === "closed" || e.status === "graded";
+                return (
+                  <Card key={e.id}>
+                    <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+                      {e.status}
+                    </div>
+                    <div className="font-display font-bold text-lg mt-1">{e.title}</div>
+                    <div className="text-sm text-muted-foreground mt-0.5">
+                      {e.questions_count || 0} questions · {e.duration} min
+                    </div>
+                    <div className="text-xs font-mono text-muted-foreground mt-1">
+                      {fmtMY(e.start_time, { dateStyle: "medium", timeStyle: "short" })}
+                    </div>
+                    <WakeoutButton asChild size="sm" className="mt-3" variant="secondary">
+                      {examEnded ? (
+                        <Link to="/student/exams/$examId/result" params={{ examId: e.id }}>
+                          Result →
+                        </Link>
+                      ) : (
+                        <Link to="/student/exams/$examId/lobby" params={{ examId: e.id }}>
+                          Open →
+                        </Link>
+                      )}
+                    </WakeoutButton>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </Section>

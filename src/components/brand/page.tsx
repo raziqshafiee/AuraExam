@@ -42,7 +42,7 @@ export function Stat({ label, value, color = "bg-card" }: { label: string; value
   );
 }
 
-export function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+export function Section({ title, action, children }: { title: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="mb-10">
       <div className="flex items-center justify-between mb-4">

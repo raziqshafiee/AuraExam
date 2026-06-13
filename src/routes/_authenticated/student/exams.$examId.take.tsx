@@ -1,12 +1,13 @@
 "use client";
 
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
-import { getExamForTaking, recordFlag } from "@/lib/supabase/exams";
+import { getExamForTaking, recordFlag, saveExamProgress, submitExam } from "@/lib/supabase/exams";
 import { recordHeartbeat } from "@/lib/supabase/proctor";
-import { Flag, Camera, ChevronLeft, ChevronRight, AlertTriangle, Maximize } from "lucide-react";
+import { Flag, Camera, ChevronLeft, ChevronRight, AlertTriangle, Maximize, X } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute(
   "/_authenticated/student/exams/$examId/take"
@@ -73,13 +74,22 @@ function TakeExam() {
   });
   const [integrityFlags, setIntegrityFlags] = useState(0);
   const [lastFlagType, setLastFlagType] = useState<string | null>(null);
+  // Review/submit happens in an in-page overlay (not a separate route) so
+  // fullscreen + integrity listeners stay mounted the whole time.
+  const [showReview, setShowReview] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Mirror of `answers` for async handlers (autosave, timer submit) that must
+  // read the current value without being re-registered on every keystroke.
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const savingRef = useRef(false);
 
   // Stable refs so async event handlers always see current values without
   // requiring re-registration of event listeners on every render.
   const submissionIdRef = useRef(submission?.id ?? "");
   const examIdRef = useRef(exam.id);
   const storageKeyRef = useRef(storageKey);
-  const questionCountRef = useRef(questions.length);
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   // Set to true once the student navigates to submit/result — prevents stray
@@ -96,6 +106,40 @@ function TakeExam() {
   useEffect(() => { try { sessionStorage.setItem(`${storageKey}-flagged`, JSON.stringify([...flagged])); } catch {} }, [flagged]);
   useEffect(() => { try { sessionStorage.setItem(`${storageKey}-idx`, String(idx)); } catch {} }, [idx]);
 
+  // Server autosave — pushes the latest answers to the server so a timeout,
+  // tab-close, or crash no longer wipes the attempt. Single-inflight guard
+  // avoids overlapping saves; skipped once a final submit is underway. Reads
+  // refs only, so it is stable across renders.
+  const flushSave = useCallback(async () => {
+    const sid = submissionIdRef.current;
+    if (!sid || submittingRef.current || savingRef.current) return;
+    savingRef.current = true;
+    try {
+      await saveExamProgress({ data: { submissionId: sid, answers: answersRef.current } });
+    } catch { /* best-effort; next tick retries */ }
+    finally { savingRef.current = false; }
+  }, []);
+
+  // Debounced autosave on each answer change.
+  useEffect(() => {
+    if (!submissionIdRef.current) return;
+    const t = setTimeout(() => { flushSave(); }, 2000);
+    return () => clearTimeout(t);
+  }, [answers, flushSave]);
+
+  // Safety net: flush on tab-hide (best-effort before a close) and on a slow
+  // interval in case the debounce never settles during steady typing.
+  useEffect(() => {
+    if (!submissionIdRef.current) return;
+    const onHide = () => { if (document.visibilityState === "hidden") flushSave(); };
+    document.addEventListener("visibilitychange", onHide);
+    const iv = setInterval(() => { flushSave(); }, 20_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      clearInterval(iv);
+    };
+  }, [flushSave]);
+
   // Timer countdown.
   // Uses refs instead of calling handleReviewSubmit() to avoid the stale
   // closure problem — handleReviewSubmit captures submission/answers/flagged
@@ -103,26 +147,29 @@ function TakeExam() {
   // we never want to restart the interval). Reading from sessionStorage gives
   // us the current answer counts without needing React state in scope.
   useEffect(() => {
-    function triggerTimerSubmit() {
+    // Time is up — submit the current answers server-side, then go to the
+    // result. Submitting (not just navigating to a review page) is what stops a
+    // student who stepped away at the buzzer from losing everything.
+    async function triggerTimerSubmit() {
       if (!submissionIdRef.current || submittingRef.current) return;
       submittingRef.current = true;
-      let answered = 0;
-      let flaggedSize = 0;
       try {
-        const stored = sessionStorage.getItem(storageKeyRef.current);
-        if (stored) answered = Object.keys(JSON.parse(stored)).length;
-        const storedFlagged = sessionStorage.getItem(`${storageKeyRef.current}-flagged`);
-        if (storedFlagged) flaggedSize = JSON.parse(storedFlagged).length;
+        await submitExam({
+          data: {
+            examId: examIdRef.current,
+            submissionId: submissionIdRef.current,
+            answers: answersRef.current,
+          },
+        });
+      } catch { /* server force-finalizes on close as the backstop */ }
+      try {
+        sessionStorage.removeItem(storageKeyRef.current);
+        sessionStorage.removeItem(`${storageKeyRef.current}-flagged`);
+        sessionStorage.removeItem(`${storageKeyRef.current}-idx`);
       } catch {}
       navigateRef.current({
-        to: "/student/exams/$examId/submit-confirm",
+        to: "/student/exams/$examId/result",
         params: { examId: examIdRef.current },
-        search: {
-          submissionId: submissionIdRef.current,
-          answered,
-          flagged: flaggedSize,
-          skipped: questionCountRef.current - answered,
-        },
       });
     }
 
@@ -304,7 +351,18 @@ function TakeExam() {
 
   function setAns(v: string) {
     if (!q) return;
-    setAnswers((prev) => ({ ...prev, [q.id]: v }));
+    setAnswers((prev) => {
+      const next = { ...prev };
+      // An essay cleared back to empty/whitespace is NOT an answer — drop the
+      // key so answered/unanswered counts agree everywhere (MCQ/TF are never
+      // empty). Keeps Object.keys(answers) == genuinely-answered.
+      if (q.type === "ESSAY" && v.trim() === "") {
+        delete next[q.id];
+      } else {
+        next[q.id] = v;
+      }
+      return next;
+    });
   }
 
   function toggleFlag() {
@@ -319,19 +377,41 @@ function TakeExam() {
   const answeredCount = Object.keys(answers).length;
   const skippedCount = questions.length - answeredCount;
 
+  // Open the review overlay (stays on this page → lockdown stays active).
   function handleReviewSubmit() {
     if (!submission) return;
+    setShowReview(true);
+  }
+
+  // Jump back to a question from the review overlay.
+  function reviewGoToQuestion(i: number) {
+    setShowReview(false);
+    setIdx(i);
+  }
+
+  // Final submit from inside the overlay. submittingRef is raised first so stray
+  // flags don't fire during the submit/navigation; reset on failure so a student
+  // hitting a transient error isn't left with proctoring disabled.
+  async function handleFinalSubmit() {
+    if (!submission || submittingRef.current) return;
+    setSubmitting(true);
     submittingRef.current = true;
-    navigate({
-      to: "/student/exams/$examId/submit-confirm",
-      params: { examId: exam.id },
-      search: {
-        submissionId: submission.id,
-        answered: answeredCount,
-        flagged: flagged.size,
-        skipped: skippedCount,
-      },
-    });
+    try {
+      await submitExam({
+        data: { examId: exam.id, submissionId: submission.id, answers },
+      });
+      try {
+        sessionStorage.removeItem(storageKey);
+        sessionStorage.removeItem(`${storageKey}-flagged`);
+        sessionStorage.removeItem(`${storageKey}-idx`);
+      } catch {}
+      toast.success("Exam submitted successfully!");
+      navigate({ to: "/student/exams/$examId/result", params: { examId: exam.id } });
+    } catch (err: any) {
+      toast.error(err?.message ?? "Failed to submit exam");
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
   }
 
   if (!q) {
@@ -505,7 +585,7 @@ function TakeExam() {
         <aside className="rounded-3xl border-2 border-ink bg-card shadow-brut p-5 h-fit">
           <div className="font-display font-bold mb-3">Questions</div>
           <div className="grid grid-cols-5 gap-1.5">
-            {questions.map((qq, i) => {
+            {questions.map((qq: any, i: number) => {
               const ans = answers[qq.id];
               const fl = flagged.has(qq.id);
               return (
@@ -541,6 +621,142 @@ function TakeExam() {
           </button>
         </aside>
       </div>
+
+      {/* Review & submit overlay — rendered in-page so fullscreen and all
+          integrity listeners stay mounted while the student reviews. */}
+      {showReview && (
+        <div className="fixed inset-0 z-50 bg-ink/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-4 md:p-8">
+          <div className="w-full max-w-2xl my-auto space-y-4">
+            <div className="rounded-3xl border-2 border-ink bg-card shadow-brut p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <span className="inline-block px-3 py-1 rounded-full border-2 border-ink font-mono text-[10px] uppercase tracking-widest bg-pink text-white">
+                    One more step
+                  </span>
+                  <h2 className="mt-2 font-display font-extrabold text-3xl">Review &amp; submit</h2>
+                  <p className="text-sm text-muted-foreground mt-1">{exam.classCode} · {exam.title}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowReview(false)}
+                  className="shrink-0 w-9 h-9 inline-flex items-center justify-center rounded-full border-2 border-ink bg-card hover:bg-secondary"
+                  aria-label="Back to exam"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-3 divide-x divide-ink/10 text-center mt-5 border-2 border-ink rounded-2xl overflow-hidden">
+                <div className="px-4 py-3">
+                  <div className="font-display font-extrabold text-3xl text-violet">{answeredCount}</div>
+                  <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mt-1">Answered</div>
+                </div>
+                <div className="px-4 py-3">
+                  <div className="font-display font-extrabold text-3xl text-amber">{flagged.size}</div>
+                  <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mt-1">Flagged</div>
+                </div>
+                <div className="px-4 py-3">
+                  <div className="font-display font-extrabold text-3xl text-muted-foreground">{skippedCount}</div>
+                  <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mt-1">Skipped</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Question map */}
+            <div className="rounded-3xl border-2 border-ink bg-card shadow-brut p-6">
+              <div className="font-display font-bold mb-3">Question map</div>
+              <div className="grid grid-cols-10 gap-1.5">
+                {questions.map((qq: any, i: number) => {
+                  const isAnswered = !!answers[qq.id];
+                  const isFlagged = flagged.has(qq.id);
+                  return (
+                    <button
+                      key={qq.id}
+                      onClick={() => reviewGoToQuestion(i)}
+                      title={`Q${i + 1}${isFlagged ? " · flagged" : isAnswered ? " · answered" : " · unanswered"}`}
+                      className={`aspect-square rounded-lg border-2 border-ink text-xs font-mono font-bold hover:ring-2 hover:ring-pink hover:ring-offset-1 transition-all ${
+                        isFlagged ? "bg-amber" : isAnswered ? "bg-lime" : "bg-background"
+                      }`}
+                    >
+                      {i + 1}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border-2 border-ink bg-lime inline-block" /> Answered</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border-2 border-ink bg-amber inline-block" /> Flagged</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border-2 border-ink bg-background inline-block" /> Unanswered</span>
+              </div>
+            </div>
+
+            {/* Per-question answer list */}
+            <div className="rounded-3xl border-2 border-ink bg-card shadow-brut p-6">
+              <div className="font-display font-bold mb-3">Your answers</div>
+              <div className="space-y-2">
+                {questions.map((qq: any, i: number) => {
+                  const ans = answers[qq.id];
+                  const isFlagged = flagged.has(qq.id);
+                  const opts: string[] = qq.type === "MCQ" ? (qq.meta as any)?.options ?? [] : [];
+                  let answerNode: React.ReactNode;
+                  if (!ans) {
+                    answerNode = <span className="text-xs text-muted-foreground italic">Unanswered</span>;
+                  } else if (qq.type === "MCQ") {
+                    const li = ["A", "B", "C", "D"].indexOf(ans);
+                    answerNode = <span className="text-xs font-semibold text-violet">{ans} · <span className="font-normal">{opts[li] ?? ""}</span></span>;
+                  } else if (qq.type === "TF") {
+                    answerNode = <span className={`text-xs font-bold ${ans === "True" ? "text-lime-700" : "text-pink"}`}>{ans}</span>;
+                  } else {
+                    const words = ans.trim().split(/\s+/).filter(Boolean).length;
+                    answerNode = <span className="text-xs text-muted-foreground">{words} word{words !== 1 ? "s" : ""}</span>;
+                  }
+                  return (
+                    <button
+                      key={qq.id}
+                      onClick={() => reviewGoToQuestion(i)}
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl border-2 text-left hover:shadow-brut-sm transition-all ${
+                        isFlagged ? "border-amber bg-amber/10" : ans ? "border-lime/60 bg-lime/5" : "border-ink/20 bg-background"
+                      }`}
+                    >
+                      <span className="font-mono text-xs font-bold shrink-0 w-5 text-center text-ink/50">{i + 1}</span>
+                      <span className="text-xs font-mono uppercase px-1.5 py-0.5 rounded border border-ink/20 text-ink/50 shrink-0">{qq.type}</span>
+                      <span className="flex-1 text-sm text-ink/70 truncate">{qq.text}</span>
+                      <span className="shrink-0">{answerNode}</span>
+                      {isFlagged && <Flag className="w-3.5 h-3.5 text-amber shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="rounded-3xl border-2 border-ink bg-card shadow-brut p-6">
+              {skippedCount > 0 && (
+                <p className="text-sm text-amber font-medium mb-3 flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  {skippedCount} question{skippedCount > 1 ? "s" : ""} unanswered — you can still go back.
+                </p>
+              )}
+              <p className="text-sm text-muted-foreground mb-4">
+                Once you submit you can't reopen this paper. Sure you're good?
+              </p>
+              <div className="flex gap-3">
+                <WakeoutButton variant="secondary" className="flex-1" onClick={() => setShowReview(false)} disabled={submitting}>
+                  <ChevronLeft className="w-4 h-4" /> Back to exam
+                </WakeoutButton>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={handleFinalSubmit}
+                  className="flex-1 border-2 border-ink rounded-2xl px-4 py-3 font-bold bg-pink text-white hover:shadow-brut transition-all disabled:opacity-50"
+                >
+                  {submitting ? "Submitting…" : "Submit exam"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

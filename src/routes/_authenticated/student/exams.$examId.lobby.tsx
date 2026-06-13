@@ -1,5 +1,5 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
+import { useState, useEffect } from "react";
 import { PageHeader, Card } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
@@ -20,7 +20,16 @@ export const Route = createFileRoute(
   "/_authenticated/student/exams/$examId/lobby"
 )({
   head: () => ({ meta: [{ title: "Exam lobby — Aura" }] }),
-  loader: ({ params }) => getStudentExamLobby({ data: params.examId }),
+  loader: async ({ params }) => {
+    try {
+      return await getStudentExamLobby({ data: params.examId });
+    } catch (err: any) {
+      if (err?.message === "This exam has ended") {
+        throw redirect({ to: "/student" });
+      }
+      throw err;
+    }
+  },
   component: Lobby,
 });
 
@@ -34,6 +43,51 @@ function Lobby() {
   const [agreed, setAgreed] = useState(false);
   const [starting, setStarting] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
+
+  const existingStatus = exam.existingSubmission?.status;
+  const isRetake = existingStatus === "retake-approved";
+
+  const [examEnded, setExamEnded] = useState(() => {
+    if (isRetake) return false;
+    if (exam.status === "closed" || exam.status === "graded") return true;
+    return exam.end_time ? new Date(exam.end_time).getTime() <= Date.now() : false;
+  });
+
+  // Auto-exit anyone sitting in the lobby when the exam window closes.
+  useEffect(() => {
+    if (isRetake || !exam.end_time) return;
+    const msLeft = new Date(exam.end_time).getTime() - Date.now();
+    if (msLeft <= 0) { setExamEnded(true); return; }
+    const t = setTimeout(() => setExamEnded(true), msLeft);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (examEnded) {
+    return (
+      <>
+        <PageHeader
+          badge={exam.classCode}
+          badgeColor="bg-pink"
+          title={exam.title}
+          subtitle="Exam closed"
+        />
+        <Card className="max-w-lg">
+          <div className="flex items-start gap-3 mb-5">
+            <Clock className="w-6 h-6 text-pink shrink-0 mt-0.5" />
+            <div>
+              <div className="font-display font-bold text-lg">This exam has closed</div>
+              <p className="text-sm text-muted-foreground mt-1">
+                The exam window ended at {fmt(exam.end_time)}. You can no longer enter this paper.
+              </p>
+            </div>
+          </div>
+          <WakeoutButton asChild>
+            <Link to="/student">← Back to dashboard</Link>
+          </WakeoutButton>
+        </Card>
+      </>
+    );
+  }
 
   const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   if (isMobile) {
@@ -49,8 +103,6 @@ function Lobby() {
       </div>
     );
   }
-
-  const existingStatus = exam.existingSubmission?.status;
 
   // Already submitted/graded — not eligible to retake
   if (

@@ -46,7 +46,6 @@ function StudentClasses() {
             <div className="text-xs font-mono">{c.code}</div>
             <div className="mt-1 font-display font-extrabold text-2xl">{c.name}</div>
             <div className="mt-1 text-sm">{c.lecturer}</div>
-            <div className="mt-1 text-sm opacity-80">{c.students} students</div>
             <WakeoutButton asChild size="sm" variant="secondary" className="mt-4">
               <Link to="/student/classes/$classId" params={{ classId: c.id }}>Open class →</Link>
             </WakeoutButton>

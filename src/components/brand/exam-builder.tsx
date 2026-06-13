@@ -43,6 +43,7 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
   const [endTime, setEndTime] = useState(isoToMyLocalInput(exam?.end_time));
   const [duration, setDuration] = useState(exam?.duration ?? 90);
   const [requireCamera, setRequireCamera] = useState(exam?.require_camera ?? false);
+  const [shuffle, setShuffle] = useState(exam?.shuffle ?? false);
   const [pickedIds, setPickedIds] = useState<string[]>(
     exam?.questions?.map((q) => q.id) ?? []
   );
@@ -99,10 +100,6 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
         toast.error("Add at least one question before publishing");
         return;
       }
-      if (new Date(myLocalInputToISO(startTime)) < new Date()) {
-        toast.error("Start time must be in the future");
-        return;
-      }
       const windowMs = new Date(myLocalInputToISO(endTime)).getTime() - new Date(myLocalInputToISO(startTime)).getTime();
       if (windowMs < duration * 60_000) {
         toast.error("The exam window is shorter than the timer duration");
@@ -123,6 +120,7 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
             end_time: myLocalInputToISO(endTime),
             duration,
             require_camera: requireCamera,
+            shuffle,
             status: newStatus,
             question_ids: pickedIds,
           },
@@ -140,6 +138,7 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
             end_time: myLocalInputToISO(endTime),
             duration,
             require_camera: requireCamera,
+            shuffle,
             status: newStatus,
             question_ids: pickedIds,
           },
@@ -233,6 +232,7 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
               <input
                 type="datetime-local"
                 disabled={isPublished}
+                min={isoToMyLocalInput(new Date().toISOString())}
                 className="border-2 border-ink rounded-xl px-4 py-3 bg-background focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
@@ -245,6 +245,7 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
               <input
                 type="datetime-local"
                 disabled={isPublished}
+                min={isoToMyLocalInput(new Date().toISOString())}
                 className="border-2 border-ink rounded-xl px-4 py-3 bg-background focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                 value={endTime}
                 onChange={(e) => setEndTime(e.target.value)}
@@ -279,6 +280,22 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
               className={`relative w-12 h-6 rounded-full border-2 border-ink transition-colors ${requireCamera ? "bg-violet" : "bg-muted"}`}
             >
               <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white border border-ink/30 transition-all ${requireCamera ? "left-6" : "left-0.5"}`} />
+            </button>
+          </div>
+          {/* Shuffle toggle */}
+          <div className={`flex items-center justify-between px-4 py-3 rounded-2xl border-2 transition-colors ${shuffle ? "border-violet bg-violet/10" : "border-ink/20 bg-background"}`}>
+            <div>
+              <p className="text-xs font-mono uppercase tracking-widest text-ink/60">Shuffle questions</p>
+              <p className="text-sm font-semibold mt-0.5">{shuffle ? "Per-student random order + options" : "Same order for everyone"}</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={shuffle}
+              onClick={() => setShuffle((v) => !v)}
+              className={`relative w-12 h-6 rounded-full border-2 border-ink transition-colors ${shuffle ? "bg-violet" : "bg-muted"}`}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white border border-ink/30 transition-all ${shuffle ? "left-6" : "left-0.5"}`} />
             </button>
           </div>
         </div>
