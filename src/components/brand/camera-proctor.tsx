@@ -10,12 +10,9 @@ import {
 } from "lucide-react";
 import { WakeoutButton } from "./wakeout-button";
 import { recordProctorEvent } from "@/lib/supabase/proctor";
-import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
 
 type PermState = "idle" | "requesting" | "granted" | "denied";
 type FaceState = "idle" | "loading" | "ok" | "missing";
-
-const PROCTOR_BUCKET = "proctor-snapshots";
 
 // Grace periods: face-missing uses 3s; multiple-faces uses 8s to avoid
 // false-positives from someone briefly walking past in the background.
@@ -28,12 +25,6 @@ const FACE_COOLDOWN_MS = 30_000;
 const MULTIPLE_FACE_COOLDOWN_MS = 60_000;
 const GAZE_COOLDOWN_MS = 30_000;
 
-// Adaptive snapshot intervals.
-// Alert mode (2 min after any suspicious event) fires every 15s for dense evidence.
-const SNAPSHOT_INTERVAL_MS = 60_000;
-const SNAPSHOT_ALERT_INTERVAL_MS = 15_000;
-const ALERT_DURATION_MS = 120_000;
-
 interface Props {
   /** setup = lobby camera check (manual start, large preview)
    *  monitor = during exam (auto-start, small floating overlay) */
@@ -42,7 +33,7 @@ interface Props {
    *  true = camera granted AND face detected */
   onReady?: (ready: boolean) => void;
   /** Submission being proctored. When provided in monitor mode, the proctor
-   *  reports advisory face/gaze events and uploads periodic snapshots. */
+   *  reports advisory face/gaze events. */
   submissionId?: string;
   /** Called when a hard-flag-worthy camera event fires (multiple faces). The
    *  parent is responsible for calling recordFlag so auto-submit logic lives
@@ -76,7 +67,8 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<any>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const supabaseRef = useRef<ReturnType<typeof createBrowserSupabase> | null>(null);
+  // P-1: track mount state so async continuations don't touch unmounted refs
+  const mountedRef = useRef(true);
   const onHardFlagRef = useRef(onHardFlag);
   onHardFlagRef.current = onHardFlag;
 
@@ -89,8 +81,6 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
     lastMultipleReport: 0,
     lastGazeReport: 0,
     lastHeadTurnReport: 0,
-    lastSnapshot: 0,
-    alertModeUntil: 0,
   });
 
   const reportingEnabled = mode === "monitor" && !!submissionId;
@@ -101,36 +91,6 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
   function report(type: string, label: string) {
     if (!submissionId) return;
     recordProctorEvent({ data: { submissionId, type, label } }).catch(() => {});
-  }
-
-  function captureAndUpload() {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2 || !submissionId) return;
-    const vw = video.videoWidth || 640;
-    const vh = video.videoHeight || 480;
-    const w = 320;
-    const h = Math.round((vh / vw) * w) || 240;
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, w, h);
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) return;
-        if (!supabaseRef.current) supabaseRef.current = createBrowserSupabase();
-        supabaseRef.current.storage
-          .from(PROCTOR_BUCKET)
-          .upload(`${submissionId}/${Date.now()}.jpg`, blob, {
-            contentType: "image/jpeg",
-            upsert: false,
-          })
-          .catch(() => {});
-      },
-      "image/jpeg",
-      0.6
-    );
   }
 
   // Called every detection tick (≈500ms). Uses refs so debounce/cooldown state
@@ -144,7 +104,6 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
       if (!p.missingSince) p.missingSince = now;
       if (now - p.missingSince >= FACE_GRACE_MS && now - p.lastMissingReport >= FACE_COOLDOWN_MS) {
         p.lastMissingReport = now;
-        p.alertModeUntil = now + ALERT_DURATION_MS;
         report("face-missing", "Face not detected on camera");
       }
     } else {
@@ -159,7 +118,6 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
         now - p.lastMultipleReport >= MULTIPLE_FACE_COOLDOWN_MS
       ) {
         p.lastMultipleReport = now;
-        p.alertModeUntil = now + ALERT_DURATION_MS;
         onHardFlagRef.current?.("multiple-faces", `${faceCount} faces detected on camera`);
       }
     } else {
@@ -178,7 +136,6 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
           now - p.lastHeadTurnReport >= GAZE_COOLDOWN_MS
         ) {
           p.lastHeadTurnReport = now;
-          p.alertModeUntil = now + ALERT_DURATION_MS;
           report("head-turned", `Head turned ${yawDeg > 0 ? "right" : "left"} during exam`);
         }
       } else {
@@ -193,7 +150,6 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
           now - p.lastGazeReport >= GAZE_COOLDOWN_MS
         ) {
           p.lastGazeReport = now;
-          p.alertModeUntil = now + ALERT_DURATION_MS;
           report("gaze-away", "Student looking away from screen");
         }
       } else {
@@ -204,17 +160,10 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
       p.headTurnSince = 0;
       p.gazeSince = 0;
     }
-
-    // ── Adaptive snapshot rate ───────────────────────────────────────────────
-    const inAlertMode = now < p.alertModeUntil;
-    const snapshotInterval = inAlertMode ? SNAPSHOT_ALERT_INTERVAL_MS : SNAPSHOT_INTERVAL_MS;
-    if (now - p.lastSnapshot >= snapshotInterval) {
-      p.lastSnapshot = now;
-      captureAndUpload();
-    }
   }
 
   const cleanup = useCallback(() => {
+    mountedRef.current = false;
     if (intervalRef.current) clearInterval(intervalRef.current);
     streamRef.current?.getTracks().forEach((t) => t.stop());
     detectorRef.current?.close?.();
@@ -239,6 +188,11 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
       });
+      // P-1: component may have unmounted while getUserMedia was awaiting
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       streamRef.current = stream;
       const video = videoRef.current;
       if (video) {
@@ -249,6 +203,7 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
       setFace("loading");
       await loadDetector();
     } catch {
+      if (!mountedRef.current) return;
       setPerm("denied");
       if (reportingEnabled) report("camera-lost", "Camera unavailable during exam");
     }
@@ -258,6 +213,7 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
     try {
       // @ts-ignore — loaded from CDN at runtime
       const { FaceLandmarker, FilesetResolver } = await preloadMediaPipe();
+      if (!mountedRef.current) return;
       const resolver = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
       );
@@ -274,6 +230,11 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
         outputFaceBlendshapes: false,
         outputFacialTransformationMatrixes: true,
       });
+      // P-1: component may have unmounted during the ~26MB model download
+      if (!mountedRef.current) {
+        detector.close?.();
+        return;
+      }
       detectorRef.current = detector;
 
       intervalRef.current = setInterval(() => {
@@ -291,6 +252,7 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
         }
       }, 500);
     } catch {
+      if (!mountedRef.current) return;
       setFace("missing");
     }
   }
@@ -408,9 +370,8 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
       )}
 
       <p className="text-xs text-muted-foreground">
-        Face detection runs locally in your browser. During the exam, periodic
-        face snapshots are captured and shared with your lecturer for integrity
-        review. This is a deterrent, not a guarantee.
+        Face detection runs locally in your browser. Integrity events (face missing,
+        multiple faces, gaze away) are recorded for lecturer review during the exam.
       </p>
     </div>
   );

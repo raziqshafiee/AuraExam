@@ -1,11 +1,11 @@
 import { Link, useRouterState, useNavigate, useMatches } from "@tanstack/react-router";
-import { type ReactNode, Fragment } from "react";
+import { type ReactNode, Fragment, useState, useEffect } from "react";
 import { Logo } from "./logo";
 import { useAuthUser, signOut, type Role } from "@/lib/auth";
 import {
-  Bell, LogOut, User, ChevronDown, ChevronRight, Menu,
+  Bell, LogOut, User, ChevronDown, ChevronRight, ChevronLeft, Menu,
   LayoutDashboard, BookOpen, FileText, Library, Scale,
-  Users, ScrollText, Shield, ShieldAlert,
+  Users, ScrollText, ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -40,7 +40,6 @@ const PRIMARY_NAV: Record<Role, NavItem[]> = {
     { to: "/admin/exams",      label: "Exams",     icon: FileText },
     { to: "/admin/integrity",  label: "Integrity", icon: ShieldAlert },
     { to: "/admin/audit-log",  label: "Audit Log", icon: ScrollText },
-    { to: "/admin/pdpa",       label: "PDPA",      icon: Shield },
   ],
 };
 
@@ -86,9 +85,9 @@ function NavBadge({ count }: { count: number }) {
 }
 
 function NavLink({
-  item, role, pathname, badges,
+  item, role, pathname, badges, collapsed = false,
 }: {
-  item: NavItem; role: Role; pathname: string; badges: Record<string, number>;
+  item: NavItem; role: Role; pathname: string; badges: Record<string, number>; collapsed?: boolean;
 }) {
   const Icon = item.icon;
   const active = isActive(item.to, pathname);
@@ -96,15 +95,19 @@ function NavLink({
   return (
     <Link
       to={item.to}
-      className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-semibold border-2 transition-colors ${
+      title={collapsed ? item.label : undefined}
+      className={`relative flex items-center ${collapsed ? "justify-center px-0" : "gap-2.5 px-3"} py-2 rounded-xl text-sm font-semibold border-2 transition-colors ${
         active
           ? `${ROLE_BG[role]} border-ink shadow-brut-sm`
           : "border-transparent hover:bg-accent"
       }`}
     >
       <Icon className="w-4 h-4 shrink-0" />
-      <span className="flex-1">{item.label}</span>
-      <NavBadge count={count} />
+      {!collapsed && <span className="flex-1">{item.label}</span>}
+      {!collapsed && <NavBadge count={count} />}
+      {collapsed && count > 0 && (
+        <span className="absolute top-1 right-1.5 w-2 h-2 rounded-full bg-pink border border-ink" />
+      )}
     </Link>
   );
 }
@@ -174,7 +177,7 @@ const SEGMENT_LABEL: Record<string, string> = {
   classes: "Classes", exams: "Exams", "question-bank": "Question Bank",
   appeals: "Appeals", notifications: "Inbox", profile: "Profile",
   users: "Users", "audit-log": "Audit Log", integrity: "Integrity",
-  pdpa: "PDPA", settings: "Settings",
+  settings: "Settings",
   new: "New Exam", edit: "Edit", results: "Results",
   monitor: "Monitor", lobby: "Lobby", result: "Result",
   "submit-confirm": "Submit", take: "Taking Exam",
@@ -246,6 +249,21 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
 
+  // Desktop sidebar collapse. Init false (matches SSR) then sync the saved
+  // preference on mount so we never read localStorage during render — that
+  // would mismatch the server-rendered HTML and throw a hydration error.
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    try { setCollapsed(localStorage.getItem("aura-sidebar-collapsed") === "1"); } catch {}
+  }, []);
+  const toggleCollapsed = () => {
+    setCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem("aura-sidebar-collapsed", next ? "1" : "0"); } catch {}
+      return next;
+    });
+  };
+
   const isExamFullscreen = /\/exams\/[^/]+\/take$/.test(pathname);
   const role = user?.role ?? "student";
   const primaryItems = PRIMARY_NAV[role];
@@ -299,19 +317,53 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen flex">
-      <aside className="hidden md:flex w-64 shrink-0 flex-col border-r-2 border-ink bg-sidebar h-screen sticky top-0 overflow-hidden">
-        {/* Logo + role badge */}
-        <div className="p-5 border-b-2 border-ink">
-          <Logo to={`/${role}`} />
-          <div className={`mt-3 inline-block px-2.5 py-1 rounded-full border-2 border-ink text-[10px] font-mono uppercase tracking-widest ${ROLE_BG[role]}`}>
-            {role}
-          </div>
+      <aside className={`hidden md:flex ${collapsed ? "w-16" : "w-64"} shrink-0 flex-col border-r-2 border-ink bg-sidebar h-screen sticky top-0 overflow-hidden transition-[width] duration-200`}>
+        {/* Logo + role badge + collapse toggle */}
+        <div className={`${collapsed ? "p-3" : "p-5"} border-b-2 border-ink`}>
+          {collapsed ? (
+            <div className="flex flex-col items-center gap-2">
+              <Link
+                to={`/${role}`}
+                title="Aura"
+                className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-lime border-2 border-ink shadow-brut-sm"
+              >
+                <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+                  <path d="M12 1 L14.5 9 L23 11 L14.5 13 L12 21 L9.5 13 L1 11 L9.5 9 Z" />
+                </svg>
+              </Link>
+              <button
+                onClick={toggleCollapsed}
+                title="Expand sidebar"
+                aria-label="Expand sidebar"
+                className="w-8 h-8 inline-flex items-center justify-center rounded-lg border-2 border-ink bg-card hover:bg-accent"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <Logo to={`/${role}`} />
+                <button
+                  onClick={toggleCollapsed}
+                  title="Collapse sidebar"
+                  aria-label="Collapse sidebar"
+                  className="shrink-0 w-7 h-7 inline-flex items-center justify-center rounded-lg border-2 border-ink bg-card hover:bg-accent"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+              </div>
+              <div className={`mt-3 inline-block px-2.5 py-1 rounded-full border-2 border-ink text-[10px] font-mono uppercase tracking-widest ${ROLE_BG[role]}`}>
+                {role}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Primary nav */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {primaryItems.map((item) => (
-            <NavLink key={item.to} item={item} role={role} pathname={pathname} badges={badges} />
+            <NavLink key={item.to} item={item} role={role} pathname={pathname} badges={badges} collapsed={collapsed} />
           ))}
         </nav>
 
@@ -319,7 +371,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {utilityItems.length > 0 && (
           <div className="px-3 pt-3 pb-2 space-y-1 border-t-2 border-ink">
             {utilityItems.map((item) => (
-              <NavLink key={item.to} item={item} role={role} pathname={pathname} badges={badges} />
+              <NavLink key={item.to} item={item} role={role} pathname={pathname} badges={badges} collapsed={collapsed} />
             ))}
           </div>
         )}
@@ -328,10 +380,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="p-3 border-t-2 border-ink">
           <button
             onClick={doLogout}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-semibold hover:bg-accent border-2 border-transparent"
+            title={collapsed ? "Log out" : undefined}
+            className={`w-full flex items-center ${collapsed ? "justify-center px-0" : "gap-2.5 px-3"} py-2 rounded-xl text-sm font-semibold hover:bg-accent border-2 border-transparent`}
           >
             <LogOut className="w-4 h-4 shrink-0" />
-            Log out
+            {!collapsed && "Log out"}
           </button>
         </div>
       </aside>

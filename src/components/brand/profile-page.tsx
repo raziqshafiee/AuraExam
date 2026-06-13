@@ -218,24 +218,6 @@ export function ProfilePage() {
               {savingPw ? "Updating…" : "Update password"}
             </WakeoutButton>
           </Card>
-
-          {/* Danger zone */}
-          <Card className="space-y-4">
-            <div className="font-display font-bold text-lg">Danger zone</div>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-bold text-sm">Delete my data</div>
-                <div className="text-xs text-muted-foreground">PDPA request — reviewed within 30 days.</div>
-              </div>
-              <WakeoutButton
-                variant="destructive"
-                size="sm"
-                onClick={() => toast.info("Request received — we'll contact you within 30 days.")}
-              >
-                Request
-              </WakeoutButton>
-            </div>
-          </Card>
         </div>
       </div>
     </>

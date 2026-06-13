@@ -1374,47 +1374,29 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
   .inputValidator((examId: string) => examId)
   .handler(async ({ data: examId }) => {
     const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
-    const { data: exam, error: examErr } = await db(supabase)
-      .from("exams")
-      .select("id, title, status, end_time, classes(code)")
-      .eq("id", examId)
-      .single();
+    // Round 2: exam + submission in parallel — neither depends on the other.
+    const [
+      { data: exam, error: examErr },
+      { data: subData, error: subErr },
+    ] = await Promise.all([
+      db(supabase).from("exams").select("id, title, status, end_time, classes(code)").eq("id", examId).single(),
+      db(supabase).from("submissions").select("id, status, score, flags, submitted_at").eq("exam_id", examId).eq("student_id", user.id).maybeSingle(),
+    ]);
 
     if (examErr) throw new Error(examErr.message);
-
-    const { data: subData, error: subErr } = await db(supabase)
-      .from("submissions")
-      .select("id, status, score, flags, submitted_at")
-      .eq("exam_id", examId)
-      .eq("student_id", user.id)
-      .maybeSingle();
-
     if (subErr) throw new Error(subErr.message);
 
-    // Student never started — return a virtual missed result for ended exams
+    // Student never started — return a virtual missed result for ended exams.
     if (!subData) {
       if (!isExamEnded(exam)) throw new Error("No submission found for this exam");
-
-      const { data: pointRows } = await db(supabase)
-        .from("exam_questions")
-        .select("questions(points)")
-        .eq("exam_id", examId);
-      const missedTotal = (pointRows ?? []).reduce(
-        (sum: number, eq: any) => sum + (eq.questions?.points ?? 0),
-        0
-      );
-
+      const { data: pointRows } = await db(supabase).from("exam_questions").select("questions(points)").eq("exam_id", examId);
+      const missedTotal = (pointRows ?? []).reduce((sum: number, eq: any) => sum + (eq.questions?.points ?? 0), 0);
       return {
         exam: { id: exam.id, title: exam.title, classCode: exam.classes?.code ?? "" },
-        submission: {
-          id: null, status: "submitted", score: 0, total: missedTotal,
-          flags: 0, submittedAt: null, forceSubmitted: false, missed: true, flagReasons: [],
-        },
+        submission: { id: null, status: "submitted", score: 0, total: missedTotal, flags: 0, submittedAt: null, forceSubmitted: false, missed: true, flagReasons: [] },
         review: [],
       };
     }
@@ -1424,117 +1406,62 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
 
     // Force-finalize in-progress submissions when the exam window has closed.
     // Autosave keeps the student's latest answers on the server, so we grade
-    // whatever was saved rather than discarding it as a zero. A student who
-    // answered but never clicked Submit keeps their marks; only a genuinely
-    // empty attempt is reported as "no answers" (forceSubmitted = true).
+    // whatever was saved rather than discarding it as a zero.
     if (sub.status === "in-progress") {
       if (isExamEnded(exam)) {
         const [eqRes, savedRes] = await Promise.all([
-          db(supabase)
-            .from("exam_questions")
-            .select("questions(id, type, points, meta)")
-            .eq("exam_id", examId),
-          db(supabase)
-            .from("essay_answers")
-            .select("question_id, answer")
-            .eq("submission_id", sub.id),
+          db(supabase).from("exam_questions").select("questions(id, type, points, meta)").eq("exam_id", examId),
+          db(supabase).from("essay_answers").select("question_id, answer").eq("submission_id", sub.id),
         ]);
-
-        // Reconstruct the answers map from the autosaved drafts, then grade.
         const savedAnswers: Record<string, string> = {};
-        for (const row of savedRes.data ?? []) {
-          savedAnswers[row.question_id] = row.answer ?? "";
-        }
-        const { score: closedScore, rows: gradedRows } = gradeAnswers(
-          eqRes.data ?? [],
-          sub.id,
-          savedAnswers
-        );
-
-        // Re-persist with computed MCQ/TF scores (drafts were stored score: null).
+        for (const row of savedRes.data ?? []) savedAnswers[row.question_id] = row.answer ?? "";
+        const { score: closedScore, rows: gradedRows } = gradeAnswers(eqRes.data ?? [], sub.id, savedAnswers);
         await persistAnswers(createAdminClient(), sub.id, gradedRows);
-
         const finalizedAt = new Date().toISOString();
-        await db(supabase)
-          .from("submissions")
-          .update({ status: "submitted", score: closedScore, auto_score: closedScore, submitted_at: finalizedAt })
-          .eq("id", sub.id);
+        await db(supabase).from("submissions").update({ status: "submitted", score: closedScore, auto_score: closedScore, submitted_at: finalizedAt }).eq("id", sub.id);
         sub = { ...sub, status: "submitted", score: closedScore, submitted_at: finalizedAt };
         forceSubmitted = gradedRows.length === 0;
       }
     }
 
-    // Compute true total from question points
-    const { data: pointRows } = await db(supabase)
-      .from("exam_questions")
-      .select("questions(points)")
-      .eq("exam_id", examId);
-    const examTotal = (pointRows ?? []).reduce(
-      (sum: number, eq: any) => sum + (eq.questions?.points ?? 0),
-      0
-    );
+    // Round 3: all remaining reads in parallel — points total, flag log, and
+    // review questions+essays (conditionally) all depend on sub.id but not each other.
+    const needsReview = sub.status === "submitted" || sub.status === "graded";
+    const [
+      { data: pointRows },
+      { data: fr },
+      { data: eqReviewData },
+      { data: eaReviewData },
+    ] = await Promise.all([
+      db(supabase).from("exam_questions").select("questions(points)").eq("exam_id", examId),
+      db(supabase).from("flag_reasons").select("time, type, label").eq("submission_id", sub.id),
+      needsReview
+        ? db(supabase).from("exam_questions").select("order_index, questions(id, type, text, points, meta)").eq("exam_id", examId).order("order_index", { ascending: true })
+        : Promise.resolve({ data: [] as any[] }),
+      needsReview
+        ? db(supabase).from("essay_answers").select("question_id, answer, score").eq("submission_id", sub.id)
+        : Promise.resolve({ data: [] as any[] }),
+    ]);
 
-    const { data: fr } = await db(supabase)
-      .from("flag_reasons")
-      .select("time, type, label")
-      .eq("submission_id", sub.id);
+    const examTotal = (pointRows ?? []).reduce((sum: number, eq: any) => sum + (eq.questions?.points ?? 0), 0);
 
-    // Fetch review data for submitted/graded exams
     let review: any[] = [];
-    if (sub.status === "submitted" || sub.status === "graded") {
-      const [eqRes, eaRes] = await Promise.all([
-        db(supabase)
-          .from("exam_questions")
-          .select("order_index, questions(id, type, text, points, meta)")
-          .eq("exam_id", examId)
-          .order("order_index", { ascending: true }),
-        db(supabase)
-          .from("essay_answers")
-          .select("question_id, answer, score")
-          .eq("submission_id", sub.id),
-      ]);
-
+    if (needsReview) {
       const essayMap: Record<string, { answer: string; score: number | null }> = {};
-      for (const ea of eaRes.data ?? []) {
-        essayMap[ea.question_id] = { answer: ea.answer, score: ea.score };
-      }
-
-      review = (eqRes.data ?? []).map((eq: any) => {
+      for (const ea of eaReviewData ?? []) essayMap[ea.question_id] = { answer: ea.answer, score: ea.score };
+      review = (eqReviewData ?? []).map((eq: any) => {
         const q = eq.questions;
         const essay = essayMap[q.id] ?? null;
-        return {
-          orderIndex: eq.order_index,
-          id: q.id,
-          type: q.type,
-          text: q.text,
-          points: q.points,
-          meta: q.meta,
-          essayAnswer: essay?.answer ?? null,
-          essayScore: essay?.score ?? null,
-        };
+        return { orderIndex: eq.order_index, id: q.id, type: q.type, text: q.text, points: q.points, meta: q.meta, essayAnswer: essay?.answer ?? null, essayScore: essay?.score ?? null };
       });
     }
 
     return {
-      exam: {
-        id: exam.id,
-        title: exam.title,
-        classCode: exam.classes?.code ?? "",
-      },
+      exam: { id: exam.id, title: exam.title, classCode: exam.classes?.code ?? "" },
       submission: {
-        id: sub.id,
-        status: sub.status,
-        score: sub.score,
-        total: examTotal,
-        flags: sub.flags ?? 0,
-        submittedAt: sub.submitted_at,
-        forceSubmitted,
-        missed: false,
-        flagReasons: (fr ?? []).map((f: any) => ({
-          time: f.time,
-          type: f.type,
-          label: f.label,
-        })),
+        id: sub.id, status: sub.status, score: sub.score, total: examTotal,
+        flags: sub.flags ?? 0, submittedAt: sub.submitted_at, forceSubmitted, missed: false,
+        flagReasons: (fr ?? []).map((f: any) => ({ time: f.time, type: f.type, label: f.label })),
       },
       review,
     };

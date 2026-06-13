@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
+import { requireRole } from "./authz";
 
 const db = (s: ReturnType<typeof createClient>) => s as any;
 
@@ -28,9 +29,7 @@ export const getClassExportData = createServerFn({ method: "GET" })
   .inputValidator((data: { classId: string }) => data)
   .handler(async ({ data }): Promise<ClassExportData> => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer")
-      throw new Error("Unauthorized");
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
 
     const { data: cls } = await db(supabase)
       .from("classes")

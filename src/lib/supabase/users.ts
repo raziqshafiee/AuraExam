@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
+import { requireRole } from "./authz";
 import { createAdminClient } from "./admin-client";
 import { fmtMY } from "@/lib/datetime";
 import { writeAudit } from "./audit";
@@ -15,12 +16,7 @@ export type AdminUser = {
 
 async function assertAdmin() {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user || (user.user_metadata as any)?.role !== "admin") {
-    throw new Error("Unauthorized");
-  }
+  const { user } = await requireRole("admin", supabase, "Unauthorized");
   return user;
 }
 

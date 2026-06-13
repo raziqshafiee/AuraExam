@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
+import { requireRole } from "./authz";
 import { pushNotification } from "./notifications";
 import { fmtMY } from "@/lib/datetime";
 import { writeAudit } from "./audit";
@@ -126,10 +127,7 @@ export const createClass = createServerFn({ method: "POST" })
   .inputValidator((data: { code: string; name: string; color: string }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") {
-      throw new Error("Only lecturers can create classes");
-    }
+    const { user } = await requireRole("lecturer", supabase, "Only lecturers can create classes");
 
     const { data: newClass, error } = await db(supabase)
       .from("classes")
@@ -171,10 +169,7 @@ export const joinClass = createServerFn({ method: "POST" })
   .inputValidator((code: string) => code)
   .handler(async ({ data: code }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "student") {
-      throw new Error("Only students can join classes");
-    }
+    const { user } = await requireRole("student", supabase, "Only students can join classes");
 
     const { data: classInfo, error: classError } = await db(supabase)
       .from("classes")
@@ -200,10 +195,7 @@ export const deleteNote = createServerFn({ method: "POST" })
   .inputValidator((noteId: string) => noteId)
   .handler(async ({ data: noteId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") {
-      throw new Error("Unauthorized");
-    }
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
 
     const { error } = await db(supabase)
       .from("class_notes")
@@ -218,10 +210,7 @@ export const addNote = createServerFn({ method: "POST" })
   .inputValidator((data: { classId: string; title: string; description: string; fileType: "pdf" | "image" | "file"; fileName: string; fileUrl?: string }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") {
-      throw new Error("Only lecturers can add notes");
-    }
+    const { user } = await requireRole("lecturer", supabase, "Only lecturers can add notes");
 
     const { data: note, error } = await db(supabase)
       .from("class_notes")
@@ -248,10 +237,7 @@ export const deleteAnnouncement = createServerFn({ method: "POST" })
   .inputValidator((annId: string) => annId)
   .handler(async ({ data: annId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") {
-      throw new Error("Unauthorized");
-    }
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
 
     const { error } = await db(supabase)
       .from("announcements")
@@ -266,10 +252,7 @@ export const getClassMembers = createServerFn({ method: "GET" })
   .inputValidator((classId: string) => classId)
   .handler(async ({ data: classId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") {
-      throw new Error("Unauthorized");
-    }
+    await requireRole("lecturer", supabase, "Unauthorized");
 
     const { data, error } = await db(supabase)
       .from("class_enrollments")
@@ -290,10 +273,7 @@ export const removeStudent = createServerFn({ method: "POST" })
   .inputValidator((data: { classId: string; studentId: string }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") {
-      throw new Error("Unauthorized");
-    }
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
 
     // Verify the lecturer owns the class before removing a student.
     const { data: cls } = await db(supabase)
@@ -319,10 +299,7 @@ export const createAssignment = createServerFn({ method: "POST" })
   .inputValidator((data: { classId: string; title: string; description?: string; fileUrl?: string; fileName?: string; fileType?: "pdf" | "image" | "file"; maxScore?: number | null; startAt: string; endAt: string }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") {
-      throw new Error("Only lecturers can create assignments");
-    }
+    const { user } = await requireRole("lecturer", supabase, "Only lecturers can create assignments");
 
     const { data: assignment, error } = await db(supabase)
       .from("class_assignments")
@@ -361,10 +338,7 @@ export const deleteAssignment = createServerFn({ method: "POST" })
   .inputValidator((assignmentId: string) => assignmentId)
   .handler(async ({ data: assignmentId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") {
-      throw new Error("Unauthorized");
-    }
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
 
     const { error } = await db(supabase)
       .from("class_assignments")
@@ -397,10 +371,7 @@ export const submitToAssignment = createServerFn({ method: "POST" })
   .inputValidator((data: { assignmentId: string; classId: string; fileUrl: string; fileName: string; fileType: "pdf" | "image" | "file" }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "student") {
-      throw new Error("Only students can submit");
-    }
+    const { user } = await requireRole("student", supabase, "Only students can submit");
 
     // Enforce deadline on the server — the client timer is advisory only.
     const { data: assignment } = await db(supabase)
@@ -478,10 +449,7 @@ export const getMyAssignmentSubmissions = createServerFn({ method: "GET" })
   .inputValidator((classId: string) => classId)
   .handler(async ({ data: classId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "student") {
-      throw new Error("Unauthorized");
-    }
+    const { user } = await requireRole("student", supabase, "Unauthorized");
 
     const { data, error } = await db(supabase)
       .from("assignment_submissions")
@@ -497,10 +465,7 @@ export const getAssignmentSubmissions = createServerFn({ method: "GET" })
   .inputValidator((assignmentId: string) => assignmentId)
   .handler(async ({ data: assignmentId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") {
-      throw new Error("Unauthorized");
-    }
+    await requireRole("lecturer", supabase, "Unauthorized");
 
     const { data, error } = await db(supabase)
       .from("assignment_submissions")
@@ -519,10 +484,7 @@ export const reviewAssignmentSubmission = createServerFn({ method: "POST" })
   .inputValidator((data: { submissionId: string; grade?: number | null; feedback?: string | null }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") {
-      throw new Error("Unauthorized");
-    }
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
 
     const { data: sub } = await db(supabase)
       .from("assignment_submissions")
@@ -571,10 +533,7 @@ export const reviewAssignmentSubmission = createServerFn({ method: "POST" })
 export const getAllClassesAdmin = createServerFn({ method: "GET" })
   .handler(async () => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "admin") {
-      throw new Error("Unauthorized");
-    }
+    await requireRole("admin", supabase, "Unauthorized");
 
     const { data: classes, error } = await db(supabase)
       .from("classes")
@@ -598,10 +557,7 @@ export const deleteClass = createServerFn({ method: "POST" })
   .inputValidator((classId: string) => classId)
   .handler(async ({ data: classId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "admin") {
-      throw new Error("Unauthorized");
-    }
+    const { user } = await requireRole("admin", supabase, "Unauthorized");
 
     const { data: cls } = await db(supabase)
       .from("classes")

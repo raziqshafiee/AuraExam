@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
+import { requireRole } from "./authz";
 import { createAdminClient } from "./admin-client";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
@@ -11,10 +12,7 @@ export const getAdminIntegrityLog = createServerFn({ method: "GET" })
   .inputValidator((data: { page?: number; statusFilter?: string }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error("Unauthorized");
-    const role = user.user_metadata?.role as string;
-    if (role !== "admin") throw new Error("Forbidden");
+    await requireRole("admin", supabase);
 
     const admin = createAdminClient();
     const PAGE_SIZE = 25;

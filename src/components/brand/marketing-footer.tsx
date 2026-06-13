@@ -25,7 +25,6 @@ export function MarketingFooter() {
           <div className="text-xs font-mono uppercase tracking-widest text-background/50 mb-3">Company</div>
           <ul className="space-y-2 text-sm">
             <li><Link to="/contact" className="hover:text-lime">Contact</Link></li>
-            <li><span className="text-background/50">PDPA compliant</span></li>
             <li><span className="text-background/50">Built in Malaysia 🇲🇾</span></li>
           </ul>
         </div>

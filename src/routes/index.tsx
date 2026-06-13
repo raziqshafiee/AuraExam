@@ -54,7 +54,6 @@ function Index() {
             </div>
             <div className="mt-10 flex flex-wrap gap-6 text-sm">
               <div className="flex items-center gap-2"><Star className="w-5 h-5 text-amber" /> Built for UTC+8</div>
-              <div className="flex items-center gap-2"><Star className="w-5 h-5 text-pink" /> PDPA compliant</div>
               <div className="flex items-center gap-2"><Star className="w-5 h-5 text-violet" /> No video recording</div>
             </div>
           </div>
@@ -218,7 +217,6 @@ function Index() {
                 points: [
                   "Manage users — ban, unban, reset password",
                   "View the full audit log by category",
-                  "Handle PDPA data requests",
                   "Configure platform defaults",
                 ],
               },

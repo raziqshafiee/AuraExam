@@ -28,7 +28,6 @@ import { Route as AuthenticatedLecturerProfileRouteImport } from './routes/_auth
 import { Route as AuthenticatedLecturerNotificationsRouteImport } from './routes/_authenticated/lecturer/notifications'
 import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
 import { Route as AuthenticatedAdminSettingsRouteImport } from './routes/_authenticated/admin/settings'
-import { Route as AuthenticatedAdminPdpaRouteImport } from './routes/_authenticated/admin/pdpa'
 import { Route as AuthenticatedAdminIntegrityRouteImport } from './routes/_authenticated/admin/integrity'
 import { Route as AuthenticatedAdminExamsRouteImport } from './routes/_authenticated/admin/exams'
 import { Route as AuthenticatedAdminClassesRouteImport } from './routes/_authenticated/admin/classes'
@@ -157,11 +156,6 @@ const AuthenticatedAdminSettingsRoute =
     path: '/admin/settings',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedAdminPdpaRoute = AuthenticatedAdminPdpaRouteImport.update({
-  id: '/admin/pdpa',
-  path: '/admin/pdpa',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
 const AuthenticatedAdminIntegrityRoute =
   AuthenticatedAdminIntegrityRouteImport.update({
     id: '/admin/integrity',
@@ -332,7 +326,6 @@ export interface FileRoutesByFullPath {
   '/admin/classes': typeof AuthenticatedAdminClassesRoute
   '/admin/exams': typeof AuthenticatedAdminExamsRoute
   '/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
-  '/admin/pdpa': typeof AuthenticatedAdminPdpaRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/lecturer/notifications': typeof AuthenticatedLecturerNotificationsRoute
@@ -379,7 +372,6 @@ export interface FileRoutesByTo {
   '/admin/classes': typeof AuthenticatedAdminClassesRoute
   '/admin/exams': typeof AuthenticatedAdminExamsRoute
   '/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
-  '/admin/pdpa': typeof AuthenticatedAdminPdpaRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
   '/lecturer/notifications': typeof AuthenticatedLecturerNotificationsRoute
@@ -428,7 +420,6 @@ export interface FileRoutesById {
   '/_authenticated/admin/classes': typeof AuthenticatedAdminClassesRoute
   '/_authenticated/admin/exams': typeof AuthenticatedAdminExamsRoute
   '/_authenticated/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
-  '/_authenticated/admin/pdpa': typeof AuthenticatedAdminPdpaRoute
   '/_authenticated/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
   '/_authenticated/lecturer/notifications': typeof AuthenticatedLecturerNotificationsRoute
@@ -477,7 +468,6 @@ export interface FileRouteTypes {
     | '/admin/classes'
     | '/admin/exams'
     | '/admin/integrity'
-    | '/admin/pdpa'
     | '/admin/settings'
     | '/admin/users'
     | '/lecturer/notifications'
@@ -524,7 +514,6 @@ export interface FileRouteTypes {
     | '/admin/classes'
     | '/admin/exams'
     | '/admin/integrity'
-    | '/admin/pdpa'
     | '/admin/settings'
     | '/admin/users'
     | '/lecturer/notifications'
@@ -572,7 +561,6 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/classes'
     | '/_authenticated/admin/exams'
     | '/_authenticated/admin/integrity'
-    | '/_authenticated/admin/pdpa'
     | '/_authenticated/admin/settings'
     | '/_authenticated/admin/users'
     | '/_authenticated/lecturer/notifications'
@@ -752,13 +740,6 @@ declare module '@tanstack/react-router' {
       path: '/admin/settings'
       fullPath: '/admin/settings'
       preLoaderRoute: typeof AuthenticatedAdminSettingsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/admin/pdpa': {
-      id: '/_authenticated/admin/pdpa'
-      path: '/admin/pdpa'
-      fullPath: '/admin/pdpa'
-      preLoaderRoute: typeof AuthenticatedAdminPdpaRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/admin/integrity': {
@@ -951,7 +932,6 @@ interface AuthenticatedRouteChildren {
   AuthenticatedAdminClassesRoute: typeof AuthenticatedAdminClassesRoute
   AuthenticatedAdminExamsRoute: typeof AuthenticatedAdminExamsRoute
   AuthenticatedAdminIntegrityRoute: typeof AuthenticatedAdminIntegrityRoute
-  AuthenticatedAdminPdpaRoute: typeof AuthenticatedAdminPdpaRoute
   AuthenticatedAdminSettingsRoute: typeof AuthenticatedAdminSettingsRoute
   AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
   AuthenticatedLecturerNotificationsRoute: typeof AuthenticatedLecturerNotificationsRoute
@@ -990,7 +970,6 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAdminClassesRoute: AuthenticatedAdminClassesRoute,
   AuthenticatedAdminExamsRoute: AuthenticatedAdminExamsRoute,
   AuthenticatedAdminIntegrityRoute: AuthenticatedAdminIntegrityRoute,
-  AuthenticatedAdminPdpaRoute: AuthenticatedAdminPdpaRoute,
   AuthenticatedAdminSettingsRoute: AuthenticatedAdminSettingsRoute,
   AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,
   AuthenticatedLecturerNotificationsRoute:

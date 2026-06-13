@@ -42,7 +42,13 @@ export const getPendingAppealsCount = createServerFn({ method: "GET" }).handler(
   } = await supabase.auth.getUser();
   if (!user) return { count: 0 };
 
-  const role = user.user_metadata?.role as string;
+  // Read role from profiles (RLS-locked), never user_metadata (client-mutable).
+  const { data: profile } = await db(supabase)
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const role = profile?.role as string;
 
   if (role === "student") {
     const { count } = await db(supabase)

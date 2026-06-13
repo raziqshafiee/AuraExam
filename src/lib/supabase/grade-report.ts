@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
+import { requireRole } from "./authz";
 import { createAdminClient } from "./admin-client";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
@@ -17,6 +18,7 @@ export type GradeConfig = {
 };
 
 function letterGrade(pct: number): string {
+  if (!isFinite(pct) || pct < 0) return "N/A";
   if (pct >= 80) return "A";
   if (pct >= 65) return "B";
   if (pct >= 50) return "C";
@@ -28,8 +30,7 @@ export const saveGradeConfig = createServerFn({ method: "POST" })
   .inputValidator((data: { classId: string; items: GradeConfigItem[] }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || (user.user_metadata as any)?.role !== "lecturer") throw new Error("Unauthorized");
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
 
     const { data: cls } = await db(supabase).from("classes").select("lecturer_id").eq("id", data.classId).single();
     if (!cls || cls.lecturer_id !== user.id) throw new Error("Forbidden");
@@ -71,11 +72,7 @@ export const getGradeReport = createServerFn({ method: "GET" })
   .inputValidator((classId: string) => classId)
   .handler(async ({ data: classId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error("Unauthorized");
-
-    const role = (user.user_metadata as any)?.role;
-    if (role !== "lecturer" && role !== "admin") throw new Error("Unauthorized");
+    const { user, role } = await requireRole(["lecturer", "admin"], supabase, "Unauthorized");
 
     if (role === "lecturer") {
       const { data: cls } = await db(supabase).from("classes").select("lecturer_id").eq("id", classId).single();
