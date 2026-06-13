@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
 import { pushNotification } from "./notifications";
 import { writeAudit } from "./audit";
+import { APPEAL } from "@/lib/constants";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
 
@@ -102,7 +103,7 @@ export const submitAppeal = createServerFn({ method: "POST" })
 
     // Enforce 7-day window from submission
     const submittedAt = new Date(sub.submitted_at);
-    const deadline = new Date(submittedAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const deadline = new Date(submittedAt.getTime() + APPEAL.WINDOW_MS);
     if (new Date() > deadline) {
       throw new Error("Appeal window has closed (7 days after submission)");
     }
@@ -205,7 +206,7 @@ export const getAppealableSubmissions = createServerFn({ method: "GET" }).handle
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
-  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const cutoff = new Date(Date.now() - APPEAL.WINDOW_MS).toISOString();
 
   const { data: rows, error } = await db(supabase)
     .from("submissions")
@@ -240,7 +241,7 @@ export const getAppealableSubmissions = createServerFn({ method: "GET" }).handle
       autoScore: (r.auto_score ?? 0) as number,
       submittedAt: r.submitted_at as string,
       deadlineAt: new Date(
-        new Date(r.submitted_at).getTime() + 7 * 24 * 60 * 60 * 1000
+        new Date(r.submitted_at).getTime() + APPEAL.WINDOW_MS
       ).toISOString(),
       filedAppeals: filed.map((a: any) => ({
         type: a.type as AppealType,

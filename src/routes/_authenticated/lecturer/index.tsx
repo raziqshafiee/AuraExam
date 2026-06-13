@@ -1,7 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useMemo } from "react";
 import { PageHeader, Card, Stat, Section, Empty } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
+import { Countdown } from "@/components/brand/countdown";
 import { getLecturerDashboardData } from "@/lib/supabase/funcs";
 import {
   AlertTriangle,
@@ -20,25 +21,6 @@ export const Route = createFileRoute("/_authenticated/lecturer/")({
   component: LecturerDashboard,
 });
 
-function Countdown({ to }: { to: string }) {
-  const [diff, setDiff] = useState(() => new Date(to).getTime() - Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setDiff(new Date(to).getTime() - Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [to]);
-  if (diff <= 0) return <span className="font-mono text-xs font-bold text-pink animate-pulse">Ended</span>;
-  const s = Math.floor(diff / 1000);
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  const str = d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m ${sec}s`;
-  return (
-    <span className={`font-mono text-xs font-bold ${diff < 3_600_000 ? "text-pink" : "text-muted-foreground"}`}>
-      {str}
-    </span>
-  );
-}
 
 function AssignmentBar({ submitted, total }: { submitted: number; total: number }) {
   const pct = total > 0 ? Math.min(100, Math.round((submitted / total) * 100)) : 0;
@@ -76,27 +58,29 @@ function LecturerDashboard() {
     enrolledByClass,
   } = Route.useLoaderData();
 
-  const now = new Date();
   const hasActionItems =
     (pendingEssaysCount as number) > 0 ||
     (pendingAppeals as any[]).length > 0 ||
     (flaggedSubs as any[]).length > 0;
 
-  const classSummaries = (classes as any[]).map((cls) => {
-    const classExams = (exams as any[]).filter((e) => e.class_id === cls.id);
-    const nextExam = classExams.find(
-      (e) => e.status === "live" || e.status === "upcoming"
-    );
-    const activeAssignments = (assignments as any[]).filter(
-      (a) => a.class_id === cls.id && new Date(a.end_at) > now
-    );
-    return {
-      cls,
-      nextExam,
-      activeAssignments,
-      enrolled: (enrolledByClass as Record<string, number>)[cls.id] ?? 0,
-    };
-  });
+  const classSummaries = useMemo(() => {
+    const now = new Date();
+    return (classes as any[]).map((cls) => {
+      const classExams = (exams as any[]).filter((e) => e.class_id === cls.id);
+      const nextExam = classExams.find(
+        (e) => e.status === "live" || e.status === "upcoming"
+      );
+      const activeAssignments = (assignments as any[]).filter(
+        (a) => a.class_id === cls.id && new Date(a.end_at) > now
+      );
+      return {
+        cls,
+        nextExam,
+        activeAssignments,
+        enrolled: (enrolledByClass as Record<string, number>)[cls.id] ?? 0,
+      };
+    });
+  }, [classes, exams, assignments, enrolledByClass]);
 
   return (
     <>

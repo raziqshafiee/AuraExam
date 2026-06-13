@@ -6,6 +6,7 @@ import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
 import { getExamForTaking, recordFlag, saveExamProgress, submitExam } from "@/lib/supabase/exams";
 import { recordHeartbeat } from "@/lib/supabase/proctor";
+import { AUTOSAVE, ESSAY } from "@/lib/constants";
 import { Flag, Camera, ChevronLeft, ChevronRight, AlertTriangle, Maximize, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -123,7 +124,7 @@ function TakeExam() {
   // Debounced autosave on each answer change.
   useEffect(() => {
     if (!submissionIdRef.current) return;
-    const t = setTimeout(() => { flushSave(); }, 2000);
+    const t = setTimeout(() => { flushSave(); }, AUTOSAVE.DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [answers, flushSave]);
 
@@ -133,7 +134,7 @@ function TakeExam() {
     if (!submissionIdRef.current) return;
     const onHide = () => { if (document.visibilityState === "hidden") flushSave(); };
     document.addEventListener("visibilitychange", onHide);
-    const iv = setInterval(() => { flushSave(); }, 20_000);
+    const iv = setInterval(() => { flushSave(); }, AUTOSAVE.INTERVAL_MS);
     return () => {
       document.removeEventListener("visibilitychange", onHide);
       clearInterval(iv);
@@ -199,7 +200,7 @@ function TakeExam() {
     const hb = setInterval(() => {
       if (submissionIdRef.current)
         recordHeartbeat({ data: submissionIdRef.current }).catch(() => {});
-    }, 20_000);
+    }, AUTOSAVE.INTERVAL_MS);
     return () => clearInterval(hb);
   }, []);
 
@@ -549,7 +550,7 @@ function TakeExam() {
           {q.type === "ESSAY" && (
             <textarea
               rows={10}
-              maxLength={5000}
+              maxLength={ESSAY.MAX_CHARS}
               value={answers[q.id] ?? ""}
               onChange={(ev) => setAns(ev.target.value)}
               placeholder="Type your answer..."

@@ -3,9 +3,43 @@ import { createClient } from "./server";
 import { createAdminClient } from "./admin-client";
 import { pushNotification } from "./notifications";
 import { writeAudit } from "./audit";
+import { INTEGRITY, ESSAY } from "@/lib/constants";
 import { MY_TZ } from "@/lib/datetime";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
+
+function isExamEnded(exam: { status: string; end_time?: string | null }): boolean {
+  return (
+    exam.status === "closed" ||
+    exam.status === "graded" ||
+    (!!exam.end_time && new Date(exam.end_time) < new Date())
+  );
+}
+
+// Computes the authoritative deadline for a submission. The deadline is the
+// earlier of (a) started_at + duration and (b) the exam's hard end_time window.
+// If the window has already passed (e.g. a retake on a closed exam, or a
+// submit that arrives after the window closed), we exempt it from the window
+// and enforce only the duration deadline — that way retake students always get
+// their full allotted time and honest students who submit on the buzzer are not
+// penalised by network latency after close.
+function computeDeadlineMs(
+  sub: { started_at?: string | null; created_at?: string | null } | null,
+  exam: { duration?: number | null; end_time?: string | null }
+): number {
+  const startedAtMs = sub?.started_at
+    ? new Date(sub.started_at).getTime()
+    : sub?.created_at
+      ? new Date(sub.created_at).getTime()
+      : Date.now();
+  const durationDeadlineMs = startedAtMs + (exam.duration ?? 0) * 60_000;
+  const windowDeadlineMs = exam.end_time
+    ? new Date(exam.end_time).getTime()
+    : Number.POSITIVE_INFINITY;
+  const effectiveWindowMs =
+    windowDeadlineMs < Date.now() ? Number.POSITIVE_INFINITY : windowDeadlineMs;
+  return Math.min(durationDeadlineMs, effectiveWindowMs);
+}
 
 // Grade a set of answers against the exam's questions. Pure (no DB). Returns the
 // auto-score (MCQ+TF) and the answer rows to persist. Essays are stored with
@@ -43,7 +77,7 @@ function gradeAnswers(
       }
     } else if (q.type === "ESSAY") {
       if (studentAnswer.trim()) {
-        rows.push({ submission_id: submissionId, question_id: q.id, answer: studentAnswer.slice(0, 5000), score: null });
+        rows.push({ submission_id: submissionId, question_id: q.id, answer: studentAnswer.slice(0, ESSAY.MAX_CHARS), score: null });
       }
     }
   }
@@ -941,13 +975,7 @@ export const getStudentExamLobby = createServerFn({ method: "GET" })
 
     // Retake-approved students may enter the lobby even after the window closes.
     const isRetake = sub?.status === "retake-approved";
-    if (!isRetake) {
-      const ended =
-        exam.status === "closed" ||
-        exam.status === "graded" ||
-        (exam.end_time && new Date(exam.end_time) < new Date());
-      if (ended) throw new Error("This exam has ended");
-    }
+    if (!isRetake && isExamEnded(exam)) throw new Error("This exam has ended");
 
     return {
       id: exam.id,
@@ -999,24 +1027,7 @@ export const getExamForTaking = createServerFn({ method: "GET" })
       .eq("student_id", user.id)
       .maybeSingle();
 
-    // Remaining time is computed from server timestamps, never the client clock.
-    // The effective deadline is the earlier of (a) this attempt's started_at +
-    // the per-attempt duration and (b) the exam's hard end_time window. A page
-    // refresh re-runs this loader and gets the correctly decremented value, so
-    // the countdown can never be reset by reloading.
-    const startedAtMs = sub?.started_at
-      ? new Date(sub.started_at).getTime()
-      : sub?.created_at
-        ? new Date(sub.created_at).getTime()
-        : Date.now();
-    const durationDeadlineMs = startedAtMs + (exam.duration ?? 0) * 60_000;
-    const windowDeadlineMs = exam.end_time
-      ? new Date(exam.end_time).getTime()
-      : Number.POSITIVE_INFINITY;
-    // For retakes on closed exams the window has already passed — use only the
-    // duration deadline so the student gets their full allotted time.
-    const effectiveWindowMs = windowDeadlineMs < Date.now() ? Number.POSITIVE_INFINITY : windowDeadlineMs;
-    const deadlineMs = Math.min(durationDeadlineMs, effectiveWindowMs);
+    const deadlineMs = computeDeadlineMs(sub, exam);
     const remainingSeconds = Math.max(
       0,
       Math.floor((deadlineMs - Date.now()) / 1000)
@@ -1252,7 +1263,7 @@ export const saveExamProgress = createServerFn({ method: "POST" })
       rows.push({
         submission_id: data.submissionId,
         question_id: questionId,
-        answer: answer.slice(0, 5000),
+        answer: answer.slice(0, ESSAY.MAX_CHARS),
         score: null,
       });
     }
@@ -1302,21 +1313,8 @@ export const submitExam = createServerFn({ method: "POST" })
       .eq("id", data.examId)
       .single();
 
-    const startedAtMs = sub.started_at
-      ? new Date(sub.started_at).getTime()
-      : sub.created_at
-        ? new Date(sub.created_at).getTime()
-        : Date.now();
-    const durationDeadlineMs =
-      startedAtMs + (examRow?.duration ?? 0) * 60_000;
-    const windowDeadlineMs = examRow?.end_time
-      ? new Date(examRow.end_time).getTime()
-      : Number.POSITIVE_INFINITY;
-    const deadlineMs = Math.min(durationDeadlineMs, windowDeadlineMs);
-    // Grace window absorbs the auto-submit round-trip + minor clock skew so an
-    // honest student finishing on the buzzer is not penalised.
-    const GRACE_MS = 30_000;
-    const lateSubmission = Date.now() > deadlineMs + GRACE_MS;
+    const deadlineMs = computeDeadlineMs(sub, examRow);
+    const lateSubmission = Date.now() > deadlineMs + INTEGRITY.SUBMIT_GRACE_MS;
 
     const { data: eqs } = await db(supabase)
       .from("exam_questions")
@@ -1400,11 +1398,7 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
 
     // Student never started — return a virtual missed result for ended exams
     if (!subData) {
-      const examEnded =
-        exam.status === "closed" ||
-        exam.status === "graded" ||
-        (exam.end_time && new Date(exam.end_time) < new Date());
-      if (!examEnded) throw new Error("No submission found for this exam");
+      if (!isExamEnded(exam)) throw new Error("No submission found for this exam");
 
       const { data: pointRows } = await db(supabase)
         .from("exam_questions")
@@ -1434,11 +1428,7 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
     // answered but never clicked Submit keeps their marks; only a genuinely
     // empty attempt is reported as "no answers" (forceSubmitted = true).
     if (sub.status === "in-progress") {
-      const examEnded =
-        exam.status === "closed" ||
-        exam.status === "graded" ||
-        (exam.end_time && new Date(exam.end_time) < new Date());
-      if (examEnded) {
+      if (isExamEnded(exam)) {
         const [eqRes, savedRes] = await Promise.all([
           db(supabase)
             .from("exam_questions")
@@ -1598,7 +1588,7 @@ export const recordFlag = createServerFn({ method: "POST" })
         label: data.label,
       });
 
-    if (isHardFlag && newFlags >= 3) {
+    if (isHardFlag && newFlags >= INTEGRITY.FLAG_THRESHOLD) {
       await db(supabase)
         .from("submissions")
         .update({ flags: newFlags, status: "flagged", score: 0, auto_score: 0, submitted_at: new Date().toISOString() })

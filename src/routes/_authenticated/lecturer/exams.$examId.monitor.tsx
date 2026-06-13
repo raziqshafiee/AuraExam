@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { Card, PageHeader, Stat } from "@/components/brand/page";
 import { getLecturerExamMonitor } from "@/lib/supabase/exams";
 import { getProctorSnapshots } from "@/lib/supabase/proctor";
+import { INTEGRITY } from "@/lib/constants";
 import {
   AlertTriangle, CheckCircle, Clock, ShieldAlert, Loader2, Eye,
   Wifi, WifiOff, TabletSmartphone, ClipboardCopy, Minimize2,
@@ -261,17 +262,17 @@ function Monitor() {
                       <span className="text-xs font-mono text-muted-foreground flex items-center gap-1">
                         <AlertTriangle className="w-3 h-3" /> Hard flags
                       </span>
-                      <span className={`text-xs font-mono font-bold ${flags >= 3 ? "text-pink" : flags > 0 ? "text-amber-700" : "text-muted-foreground"}`}>
-                        {flags} / 3
+                      <span className={`text-xs font-mono font-bold ${flags >= INTEGRITY.FLAG_THRESHOLD ? "text-pink" : flags > 0 ? "text-amber-700" : "text-muted-foreground"}`}>
+                        {flags} / {INTEGRITY.FLAG_THRESHOLD}
                       </span>
                     </div>
                     <div className="flex gap-1">
-                      {[0, 1, 2].map((i) => (
+                      {Array.from({ length: INTEGRITY.FLAG_THRESHOLD }, (_, i) => i).map((i) => (
                         <div
                           key={i}
                           className={`h-2 flex-1 rounded-full border border-ink/20 ${
                             i < flags
-                              ? flags >= 3 ? "bg-pink" : "bg-amber"
+                              ? flags >= INTEGRITY.FLAG_THRESHOLD ? "bg-pink" : "bg-amber"
                               : "bg-ink/10"
                           }`}
                         />

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { createServerFn } from "@tanstack/react-start";
 import { supabaseClient } from "./auth-client";
 import type { User } from "@supabase/supabase-js";
 
@@ -26,14 +27,17 @@ function mapUser(user: User): AuthUser {
   };
 }
 
+const _getServerAuthUser = createServerFn({ method: "GET" }).handler(async () => {
+  const { createClient } = await import("./supabase/server");
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  return mapUser(user);
+});
+
 export async function getAuthUser(): Promise<AuthUser | null> {
   if (typeof window === "undefined") {
-    // Server-side: read session from cookies via the SSR Supabase client
-    const { createClient } = await import("./supabase/server");
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return null;
-    return mapUser(user);
+    return _getServerAuthUser();
   }
   const { data: { user } } = await supabaseClient.auth.getUser();
   if (!user) return null;

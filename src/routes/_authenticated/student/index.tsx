@@ -1,7 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useMemo } from "react";
 import { PageHeader, Card, Stat, Section, Empty } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
+import { Countdown } from "@/components/brand/countdown";
 import { getStudentDashboardData } from "@/lib/supabase/funcs";
 import {
   Radio,
@@ -19,25 +20,6 @@ export const Route = createFileRoute("/_authenticated/student/")({
   component: StudentDashboard,
 });
 
-function Countdown({ to }: { to: string }) {
-  const [diff, setDiff] = useState(() => new Date(to).getTime() - Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setDiff(new Date(to).getTime() - Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [to]);
-  if (diff <= 0) return <span className="font-mono text-xs font-bold text-pink animate-pulse">Now</span>;
-  const s = Math.floor(diff / 1000);
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  const str = d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m ${sec}s`;
-  return (
-    <span className={`font-mono text-xs font-bold ${diff < 3_600_000 ? "text-pink" : "text-muted-foreground"}`}>
-      {str}
-    </span>
-  );
-}
 
 function ScoreBar({ score, total }: { score: number; total: number }) {
   const pct = total > 0 ? Math.min(100, Math.round((score / total) * 100)) : 0;
@@ -78,19 +60,26 @@ function StudentDashboard() {
 
   const openAppeals = (appeals as any[]).filter((a) => a.status === "pending");
 
-  const classSummaries = (classes as any[]).map((cls) => {
-    const classExams = (exams as any[]).filter((e) => e.class_id === cls.id);
-    const nextExam = classExams.find((e) => e.status === "live" || e.status === "upcoming");
-    const lastResultExam = [...classExams]
-      .reverse()
-      .find((e) => (e.status === "closed" || e.status === "graded") && getSubmission(e.id));
-    const nextAssignment = (assignments as any[])
-      .filter((a) => a.class_id === cls.id)
-      .find((a) => new Date(a.end_at) > now);
-    const latestAnnouncement =
-      (announcements as any[]).find((a) => a.class_id === cls.id) ?? null;
-    return { cls, nextExam, lastResultExam, nextAssignment, latestAnnouncement };
-  });
+  const classSummaries = useMemo(() => {
+    const now = new Date();
+    return (classes as any[]).map((cls) => {
+      const classExams = (exams as any[]).filter((e) => e.class_id === cls.id);
+      const nextExam = classExams.find((e) => e.status === "live" || e.status === "upcoming");
+      const lastResultExam = [...classExams]
+        .reverse()
+        .find(
+          (e) =>
+            (e.status === "closed" || e.status === "graded") &&
+            (submissions as any[]).find((s) => s.exam_id === e.id)
+        );
+      const nextAssignment = (assignments as any[])
+        .filter((a) => a.class_id === cls.id)
+        .find((a) => new Date(a.end_at) > now);
+      const latestAnnouncement =
+        (announcements as any[]).find((a) => a.class_id === cls.id) ?? null;
+      return { cls, nextExam, lastResultExam, nextAssignment, latestAnnouncement };
+    });
+  }, [classes, exams, submissions, assignments, announcements]);
 
   return (
     <>
@@ -140,7 +129,7 @@ function StudentDashboard() {
                     <div className="flex items-center gap-1.5 mt-1 text-muted-foreground">
                       <Clock className="w-3.5 h-3.5 shrink-0" />
                       <span className="text-xs">Closes in</span>
-                      <Countdown to={e.end_time} />
+                      <Countdown to={e.end_time} expiredLabel="Now" />
                     </div>
                     <div className="mt-4">
                       {done ? (
@@ -229,6 +218,7 @@ function StudentDashboard() {
                                       ? nextExam.end_time
                                       : nextExam.start_time
                                   }
+                                  expiredLabel="Now"
                                 />
                               </div>
                               {nextExam.status === "live" &&
@@ -274,7 +264,7 @@ function StudentDashboard() {
                               <div className="flex items-center gap-1.5 mb-2 text-muted-foreground">
                                 <Clock className="w-3 h-3 shrink-0" />
                                 <span className="text-xs">Due in</span>
-                                <Countdown to={nextAssignment.end_at} />
+                                <Countdown to={nextAssignment.end_at} expiredLabel="Now" />
                               </div>
                               {nextAssignment.mySubmission ? (
                                 <span className="px-2 py-0.5 rounded-full border-2 border-ink bg-lime text-[10px] font-mono uppercase tracking-widest">

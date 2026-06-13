@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { getAdminIntegrityLog } from "@/lib/supabase/admin";
 import { fmtMY } from "@/lib/datetime";
+import { INTEGRITY } from "@/lib/constants";
 import {
   AlertTriangle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
   TabletSmartphone, ClipboardCopy, Minimize2, Users,
@@ -47,7 +48,7 @@ const FLAG_ICON: Record<string, LucideIcon> = {
 type FlagReason = { type: string; label: string; time: string };
 
 function FlagPill({ flags }: { flags: number }) {
-  const color = flags >= 3
+  const color = flags >= INTEGRITY.FLAG_THRESHOLD
     ? "bg-pink text-white border-pink"
     : "bg-amber/20 text-amber-800 border-amber/40";
   return (
