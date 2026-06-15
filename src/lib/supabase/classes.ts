@@ -5,7 +5,7 @@ import { pushNotification } from "./notifications";
 import { fmtMY } from "@/lib/datetime";
 import { writeAudit } from "./audit";
 
-const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
+const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
 async function notifyEnrolledStudents(
   supabase: ReturnType<typeof createClient>,
@@ -25,8 +25,7 @@ async function notifyEnrolledStudents(
 export const getLecturerClasses = createServerFn({ method: "GET" })
   .handler(async () => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error("Unauthorized");
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
 
     const { data: classes, error } = await db(supabase)
       .from("classes")
@@ -48,8 +47,7 @@ export const getLecturerClasses = createServerFn({ method: "GET" })
 export const getStudentClasses = createServerFn({ method: "GET" })
   .handler(async () => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error("Unauthorized");
+    const { user } = await requireRole("student", supabase, "Unauthorized");
 
     const { data: enrollments, error } = await db(supabase)
       .from("class_enrollments")
@@ -73,8 +71,7 @@ export const getClassDetail = createServerFn({ method: "GET" })
   .inputValidator((classId: string) => classId)
   .handler(async ({ data: classId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error("Unauthorized");
+    const { user } = await requireRole(["student", "lecturer", "admin"], supabase, "Unauthorized");
 
     const { data: classInfo, error: classError } = await db(supabase)
       .from("classes")
@@ -173,22 +170,63 @@ export const joinClass = createServerFn({ method: "POST" })
 
     const { data: classInfo, error: classError } = await db(supabase)
       .from("classes")
-      .select("id")
+      .select("id, name")
       .eq("code", code)
       .single();
 
     if (classError) throw new Error("Invalid class code");
 
+    const classId = (classInfo as any).id as string;
+    const className = (classInfo as any).name as string;
+
     const { error: enrollError } = await db(supabase)
       .from("class_enrollments")
-      .insert({ class_id: (classInfo as any).id, student_id: user.id });
+      .insert({ class_id: classId, student_id: user.id });
 
     if (enrollError) {
       if (enrollError.code === "23505") throw new Error("You are already enrolled in this class");
       throw new Error(enrollError.message);
     }
 
-    return { success: true, classId: (classInfo as any).id };
+    // Notify the student about any exams or assignments they can immediately act on.
+    const now = new Date().toISOString();
+    const [{ data: activeExams }, { data: openAssignments }] = await Promise.all([
+      db(supabase).from("exams").select("id, title, status").eq("class_id", classId).in("status", ["live", "upcoming"]),
+      db(supabase).from("class_assignments").select("id, title").eq("class_id", classId).gt("end_at", now),
+    ]);
+
+    const notices: Promise<void>[] = [];
+    for (const exam of activeExams ?? []) {
+      notices.push(
+        pushNotification(supabase, {
+          userId: user.id,
+          type: exam.status === "live" ? "exam_live" : "exam_upcoming",
+          title: exam.status === "live"
+            ? `Exam in progress — ${exam.title}`
+            : `Upcoming exam — ${exam.title}`,
+          body: exam.status === "live"
+            ? `An exam in ${className} is happening right now. You can still enter — head to your exam list and click Lobby to join.`
+            : `An exam is scheduled in ${className}. Check your exam list for the date and time.`,
+          link: exam.status === "live"
+            ? `/student/exams/${exam.id}/lobby`
+            : `/student/exams`,
+        })
+      );
+    }
+    for (const assignment of openAssignments ?? []) {
+      notices.push(
+        pushNotification(supabase, {
+          userId: user.id,
+          type: "assignment_available",
+          title: `Assignment available — ${assignment.title}`,
+          body: `An assignment is open in ${className}. Check the class page to submit your work before the deadline.`,
+          link: `/student/classes/${classId}`,
+        })
+      );
+    }
+    await Promise.all(notices);
+
+    return { success: true, classId };
   });
 
 export const deleteNote = createServerFn({ method: "POST" })
@@ -296,8 +334,9 @@ export const removeStudent = createServerFn({ method: "POST" })
   });
 
 export const createAssignment = createServerFn({ method: "POST" })
-  .inputValidator((data: { classId: string; title: string; description?: string; fileUrl?: string; fileName?: string; fileType?: "pdf" | "image" | "file"; maxScore?: number | null; startAt: string; endAt: string }) => data)
+  .inputValidator((data: { classId: string; title: string; description?: string; fileUrl?: string; fileName?: string; fileType?: "pdf" | "image" | "file"; maxScore: number; startAt: string; endAt: string }) => data)
   .handler(async ({ data }) => {
+    if (data.maxScore <= 0 || data.maxScore > 100) throw new Error("Max score must be between 1 and 100");
     const supabase = createClient();
     const { user } = await requireRole("lecturer", supabase, "Only lecturers can create assignments");
 
@@ -311,7 +350,7 @@ export const createAssignment = createServerFn({ method: "POST" })
         file_url: data.fileUrl ?? null,
         file_name: data.fileName ?? null,
         file_type: data.fileType ?? null,
-        max_score: data.maxScore ?? null,
+        max_score: data.maxScore,
         start_at: data.startAt,
         end_at: data.endAt,
       })

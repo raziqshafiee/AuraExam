@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
 
-const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
+const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
 // Lightweight check used by the auth guard — returns true if the current
 // session belongs to a banned account. Uses createServerFn so Vite keeps

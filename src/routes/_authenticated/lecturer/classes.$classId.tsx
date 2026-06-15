@@ -35,11 +35,15 @@ export const Route = createFileRoute("/_authenticated/lecturer/classes/$classId"
     } catch {
       throw notFound();
     }
-    const [members, assignments] = await Promise.all([
+    const [members, assignments, gradeConfig] = await Promise.all([
       getClassMembers({ data: params.classId }).catch(() => []),
       getClassAssignments({ data: params.classId }).catch(() => []),
+      getGradeConfig({ data: params.classId }).catch(() => ({ classId: params.classId, items: [], updatedAt: null })),
     ]);
-    return { ...detail, members, assignments };
+    const gradeReport = (gradeConfig as any).items?.length > 0
+      ? await getGradeReport({ data: params.classId }).catch(() => null)
+      : null;
+    return { ...detail, members, assignments, gradeConfig, gradeReport };
   },
   component: ClassDetail,
 });
@@ -68,6 +72,15 @@ function fmtEx(iso: string | null) {
   return fmtMY(iso, { dateStyle: "short", timeStyle: "short" });
 }
 
+function letterGrade(pct: number): string {
+  if (!isFinite(pct) || pct < 0) return "N/A";
+  if (pct >= 80) return "A";
+  if (pct >= 65) return "B";
+  if (pct >= 50) return "C";
+  if (pct >= 40) return "D";
+  return "F";
+}
+
 function pctEx(score: number | null, total: number) {
   if (!total || score == null) return "—";
   return `${Math.round((score / total) * 100)}%`;
@@ -88,6 +101,12 @@ function fmtDate(iso: string) {
   return fmtMY(iso, { dateStyle: "medium", timeStyle: "short" });
 }
 
+function localNow() {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 const EXAM_STATUS_STYLE: Record<string, string> = {
   draft:    "bg-secondary",
   upcoming: "bg-sky",
@@ -104,10 +123,13 @@ type ConfirmPending = {
 } | null;
 
 function ClassDetail() {
-  const { classInfo: c, announcements: initialAnn, notes: initialNotes, members: initialMembers, assignments: initialAssignments, exams: initialExams } =
+  const { classInfo: c, announcements: initialAnn, notes: initialNotes, members: initialMembers, assignments: initialAssignments, exams: initialExams, gradeConfig: initialGradeConfig, gradeReport: initialGradeReport } =
     Route.useLoaderData() as any;
 
-  const [tab, setTab] = useState<Tab>("announcements");
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window === "undefined") return "grades";
+    return (localStorage.getItem("lecturer-class-tab") as Tab) ?? "grades";
+  });
   const [notes, setNotes] = useState<any[]>(initialNotes);
   const [ann, setAnn] = useState<any[]>(initialAnn);
   const [members, setMembers] = useState<any[]>(initialMembers);
@@ -116,6 +138,10 @@ function ClassDetail() {
 
   const [confirm, setConfirm] = useState<ConfirmPending>(null);
   const [confirming, setConfirming] = useState(false);
+
+  const [annModal, setAnnModal] = useState(false);
+  const [noteModal, setNoteModal] = useState(false);
+  const [assModal, setAssModal] = useState(false);
 
   function triggerConfirm(opts: { title: string; message: string; confirmLabel?: string; fn: () => Promise<void> }) {
     setConfirm(opts);
@@ -264,28 +290,41 @@ function ClassDetail() {
     }
     printTable(`${c.name} — All Exams`, `${c.code} · ${d.exams.length} exams · ${d.students.length} students`, headers, rows);
   }
+  function buildFullReportTable(d: ClassExportData, report: Awaited<ReturnType<typeof getGradeReport>> | null) {
+    const headers = [
+      "Student",
+      ...d.exams.flatMap((ex) => [ex.title, `${ex.title} %`]),
+      ...d.assignments.flatMap((a) => [a.title, `${a.title} %`]),
+      "Weighted %", "Grade",
+    ];
+    const rows = d.students.map((st) => {
+      const examCols = d.exams.flatMap((ex) => {
+        const s = d.submissions.find((s) => s.examId === ex.id && s.studentId === st.id);
+        return s ? [s.score ?? 0, pctEx(s.score, s.total)] : ["—", "—"];
+      });
+      const assignCols = d.assignments.flatMap((a) => {
+        const sub = d.assignmentSubs.find((s) => s.assignmentId === a.id && s.studentId === st.id);
+        if (!sub || sub.grade == null) return ["—", "—"];
+        const pct = a.maxScore > 0 ? `${Math.round((sub.grade / a.maxScore) * 100)}%` : "—";
+        return [sub.grade, pct];
+      });
+      const sg = report?.studentGrades.find((g) => g.studentId === st.id);
+      return [st.name, ...examCols, ...assignCols, sg ? `${sg.pct}%` : "—", sg?.grade ?? "—"];
+    });
+    return { headers, rows };
+  }
   async function exportFullReportCSV() {
     const d = await ensureExportData(); if (!d) return;
-    const headers = ["Exam", "Date", "Student", "Score", "Total", "%", "Status", "MCQ/TF", "Essay", "Flags", "Submitted"];
-    const rows: (string | number | null)[][] = [];
-    for (const ex of d.exams) for (const st of d.students) {
-      const s = d.submissions.find((s) => s.examId === ex.id && s.studentId === st.id);
-      rows.push(s
-        ? [ex.title, fmtEx(ex.startAt), st.name, s.score ?? 0, s.total, pctEx(s.score, s.total), s.status, s.autoScore, (s.score ?? 0) - s.autoScore, s.flags, fmtEx(s.submittedAt)]
-        : [ex.title, fmtEx(ex.startAt), st.name, "—", "—", "—", "Not submitted", "—", "—", "—", "—"]);
-    }
+    let report: Awaited<ReturnType<typeof getGradeReport>> | null = null;
+    try { report = await getGradeReport({ data: c.id }); } catch {}
+    const { headers, rows } = buildFullReportTable(d, report);
     downloadCSV(`${c.code}-full-report`, buildCSV(headers, rows));
   }
   async function exportFullReportPDF() {
     const d = await ensureExportData(); if (!d) return;
-    const headers = ["Exam", "Date", "Student", "Score", "Total", "%", "Status", "MCQ/TF", "Essay", "Flags", "Submitted"];
-    const rows: (string | number | null)[][] = [];
-    for (const ex of d.exams) for (const st of d.students) {
-      const s = d.submissions.find((s) => s.examId === ex.id && s.studentId === st.id);
-      rows.push(s
-        ? [ex.title, fmtEx(ex.startAt), st.name, s.score ?? 0, s.total, pctEx(s.score, s.total), s.status, s.autoScore, (s.score ?? 0) - s.autoScore, s.flags, fmtEx(s.submittedAt)]
-        : [ex.title, fmtEx(ex.startAt), st.name, "—", "—", "—", "Not submitted", "—", "—", "—", "—"]);
-    }
+    let report: Awaited<ReturnType<typeof getGradeReport>> | null = null;
+    try { report = await getGradeReport({ data: c.id }); } catch {}
+    const { headers, rows } = buildFullReportTable(d, report);
     printTable(`${c.name} — Full Report`, `${c.code} · All exams & submissions`, headers, rows);
   }
 
@@ -300,6 +339,7 @@ function ClassDetail() {
         ...prev,
       ]);
       setAnnTitle(""); setAnnBody("");
+      setAnnModal(false);
     } catch (e: any) {
       toast.error(e.message || "Failed to post");
     } finally {
@@ -337,6 +377,7 @@ function ClassDetail() {
       setNotes((prev) => [note, ...prev]);
       setNoteTitle(""); setNoteDesc(""); setNoteFile(null);
       if (noteFileRef.current) noteFileRef.current.value = "";
+      setNoteModal(false);
     } catch (e: any) {
       toast.error(e.message || "Failed to upload note");
     } finally {
@@ -371,7 +412,13 @@ function ClassDetail() {
   }
 
   async function handleCreateAssignment() {
-    if (!assTitle.trim() || !assStartAt || !assEndAt) return;
+    const parsedMax = parseFloat(assMaxScore);
+    if (!assTitle.trim() || !assStartAt || !assEndAt || !assMaxScore.trim() || isNaN(parsedMax) || parsedMax <= 0 || parsedMax > 100) return;
+    const startDate = new Date(myLocalInputToISO(assStartAt));
+    if (startDate < new Date(Date.now() - 60_000)) {
+      toast.error("Start date cannot be in the past");
+      return;
+    }
     setIsCreatingAss(true);
     try {
       let fileUrl: string | undefined;
@@ -387,12 +434,11 @@ function ClassDetail() {
         const { data: { publicUrl } } = supabase.storage.from("class-materials").getPublicUrl(path);
         fileUrl = publicUrl; fileName = assFile.name; fileType = detectType(assFile.name);
       }
-      const parsedMaxScore = assMaxScore.trim() !== "" ? parseFloat(assMaxScore) : null;
       const assignment = await createAssignment({
         data: {
           classId: c.id, title: assTitle, description: assDesc || undefined,
           fileUrl, fileName, fileType,
-          maxScore: parsedMaxScore && !isNaN(parsedMaxScore) ? parsedMaxScore : null,
+          maxScore: parsedMax,
           startAt: myLocalInputToISO(assStartAt), endAt: myLocalInputToISO(assEndAt),
         },
       });
@@ -400,6 +446,7 @@ function ClassDetail() {
       setAssignments((prev) => [...prev, assignment]);
       setAssTitle(""); setAssDesc(""); setAssMaxScore(""); setAssStartAt(""); setAssEndAt(""); setAssFile(null);
       if (assFileRef.current) assFileRef.current.value = "";
+      setAssModal(false);
     } catch (e: any) {
       toast.error(e.message || "Failed to create assignment");
     } finally {
@@ -457,20 +504,16 @@ function ClassDetail() {
     }
   }
 
-  // Grade config state
-  const [gradeItems, setGradeItems] = useState<GradeConfigItem[]>([]);
-  const [gradeConfigLoaded, setGradeConfigLoaded] = useState(false);
-  const [gradeReport, setGradeReport] = useState<Awaited<ReturnType<typeof getGradeReport>> | null>(null);
+  // Grade config state — pre-loaded from route loader
+  const [gradeItems, setGradeItems] = useState<GradeConfigItem[]>(initialGradeConfig?.items ?? []);
+  const [savedGradeItems, setSavedGradeItems] = useState<GradeConfigItem[]>(initialGradeConfig?.items ?? []);
+  const [gradeConfigLoaded, setGradeConfigLoaded] = useState(true);
+  const [gradeReport, setGradeReport] = useState<Awaited<ReturnType<typeof getGradeReport>> | null>(initialGradeReport ?? null);
   const [savingConfig, setSavingConfig] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
 
   async function handleLoadGradeTab() {
-    if (gradeConfigLoaded) return;
-    try {
-      const cfg = await getGradeConfig({ data: c.id });
-      setGradeItems(cfg.items);
-      setGradeConfigLoaded(true);
-    } catch {}
+    // grade config and report are pre-loaded in the route loader
   }
 
   function toggleItem(type: "exam" | "assignment", id: string) {
@@ -484,13 +527,13 @@ function ClassDetail() {
 
   function setItemWeight(type: "exam" | "assignment", id: string, weight: number) {
     setGradeItems((prev) => prev.map((i) => i.type === type && i.id === id ? { ...i, weight } : i));
-    setGradeReport(null);
   }
 
   async function handleSaveConfig() {
     setSavingConfig(true);
     try {
       await saveGradeConfig({ data: { classId: c.id, items: gradeItems } });
+      setSavedGradeItems([...gradeItems]);
       toast.success("Grade config saved");
     } catch (e: any) {
       toast.error(e.message || "Failed to save");
@@ -549,7 +592,7 @@ function ClassDetail() {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => { setTab(t.key); if (t.key === "grades") handleLoadGradeTab(); }}
+            onClick={() => { setTab(t.key); localStorage.setItem("lecturer-class-tab", t.key); if (t.key === "grades") handleLoadGradeTab(); }}
             className={`px-4 py-2 rounded-full border-2 border-ink text-sm font-semibold transition-all ${
               tab === t.key ? "bg-violet text-white shadow-brut-sm" : "bg-card hover:bg-secondary"
             }`}
@@ -561,16 +604,9 @@ function ClassDetail() {
 
       {tab === "announcements" && (
         <>
-          <Section title="Post announcement">
-            <Card className="max-w-2xl space-y-3">
-              <input placeholder="Title" value={annTitle} onChange={(e) => setAnnTitle(e.target.value)} className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
-              <textarea rows={3} placeholder="What's the news?" value={annBody} onChange={(e) => setAnnBody(e.target.value)} className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
-              <WakeoutButton onClick={handlePostAnnouncement} disabled={isPosting || !annTitle.trim() || !annBody.trim()}>
-                {isPosting ? "Posting..." : "Post"}
-              </WakeoutButton>
-            </Card>
-          </Section>
-          <Section title="Posted announcements">
+          <Section title="Announcements" action={
+            <WakeoutButton size="sm" onClick={() => setAnnModal(true)}>+ New announcement</WakeoutButton>
+          }>
             <div className="space-y-3">
               {ann.map((a: any) => (
                 <Card key={a.id}>
@@ -591,24 +627,12 @@ function ClassDetail() {
         </>
       )}
 
+
       {tab === "notes" && (
         <>
-          <Section title="Upload a note">
-            <Card className="max-w-2xl space-y-3 mb-4">
-              <input value={noteTitle} onChange={(e) => setNoteTitle(e.target.value)} placeholder="Title (required)" className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
-              <input value={noteDesc} onChange={(e) => setNoteDesc(e.target.value)} placeholder="Description (optional)" className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
-              <label className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-background cursor-pointer hover:bg-secondary transition-colors">
-                <Upload className="w-4 h-4 text-muted-foreground shrink-0" />
-                <span className="flex-1 text-sm text-muted-foreground truncate">{noteFile ? noteFile.name : "Attach a file (PDF, image, Word, etc.)"}</span>
-                <input ref={noteFileRef} type="file" className="hidden" onChange={(e) => setNoteFile(e.target.files?.[0] ?? null)} />
-              </label>
-              {noteFile && <div className="text-xs font-mono text-muted-foreground">{detectType(noteFile.name).toUpperCase()} · {(noteFile.size / 1024).toFixed(1)} KB</div>}
-              <WakeoutButton onClick={handleAddNote} disabled={isUploadingNote || !noteTitle.trim() || !noteFile}>
-                {isUploadingNote ? "Uploading…" : "Upload note"}
-              </WakeoutButton>
-            </Card>
-          </Section>
-          <Section title="Class notes">
+          <Section title="Notes" action={
+            <WakeoutButton size="sm" onClick={() => setNoteModal(true)}>+ New note</WakeoutButton>
+          }>
             {notes.length === 0 ? <Empty title="No notes posted yet" /> : (
               <div className="space-y-3">
                 {notes.map((n: any) => {
@@ -678,39 +702,9 @@ function ClassDetail() {
 
       {tab === "assignments" && (
         <>
-          <Section title="Create assignment">
-            <Card className="max-w-2xl space-y-3">
-              <input value={assTitle} onChange={(e) => setAssTitle(e.target.value)} placeholder="Title (required)" className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
-              <textarea rows={3} value={assDesc} onChange={(e) => setAssDesc(e.target.value)} placeholder="Instructions / description (optional)" className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground block mb-1">Start date</label>
-                  <input type="datetime-local" value={assStartAt} onChange={(e) => setAssStartAt(e.target.value)} className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
-                </div>
-                <div>
-                  <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground block mb-1">End date</label>
-                  <input type="datetime-local" value={assEndAt} onChange={(e) => setAssEndAt(e.target.value)} className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
-                </div>
-              </div>
-              <div className="flex gap-4 flex-wrap">
-                <div>
-                  <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground block mb-1">Max score (pts) — optional</label>
-                  <input type="number" min={0} step={0.5} value={assMaxScore} onChange={(e) => setAssMaxScore(e.target.value)} placeholder="e.g. 100" className="w-40 border-2 border-ink rounded-xl px-4 py-3 bg-background" />
-                </div>
-              </div>
-              <label className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-background cursor-pointer hover:bg-secondary transition-colors">
-                <Upload className="w-4 h-4 text-muted-foreground shrink-0" />
-                <span className="flex-1 text-sm text-muted-foreground truncate">{assFile ? assFile.name : "Attach a file (optional)"}</span>
-                <input ref={assFileRef} type="file" className="hidden" onChange={(e) => setAssFile(e.target.files?.[0] ?? null)} />
-              </label>
-              {assFile && <div className="text-xs font-mono text-muted-foreground">{detectType(assFile.name).toUpperCase()} · {(assFile.size / 1024).toFixed(1)} KB</div>}
-              <WakeoutButton onClick={handleCreateAssignment} disabled={isCreatingAss || !assTitle.trim() || !assStartAt || !assEndAt}>
-                {isCreatingAss ? "Creating…" : "Create assignment"}
-              </WakeoutButton>
-            </Card>
-          </Section>
-
-          <Section title="Assignments">
+          <Section title="Assignments" action={
+            <WakeoutButton size="sm" onClick={() => setAssModal(true)}>+ New assignment</WakeoutButton>
+          }>
             {assignments.length === 0 ? <Empty title="No assignments yet" /> : (
               <div className="space-y-3">
                 {assignments.map((a: any) => {
@@ -732,7 +726,7 @@ function ClassDetail() {
                           {a.description && <p className="text-sm text-muted-foreground mt-1">{a.description}</p>}
                           <div className="text-xs font-mono text-muted-foreground mt-2 flex items-center gap-3 flex-wrap">
                             <span>{fmtDate(a.start_at)} → {fmtDate(a.end_at)}</span>
-                            {a.max_score != null && <span className="px-2 py-0.5 rounded-full border-2 border-ink bg-amber text-xs font-mono font-semibold">{a.max_score} pts</span>}
+                            <span className="px-2 py-0.5 rounded-full border-2 border-ink bg-amber text-xs font-mono font-semibold">{a.max_score} pts</span>
                           </div>
                         </div>
                         <button onClick={() => handleDeleteAssignment(a.id)} className="text-muted-foreground hover:text-pink shrink-0"><Trash2 className="w-4 h-4" /></button>
@@ -783,13 +777,13 @@ function ClassDetail() {
                                       <div className="pl-7 space-y-2">
                                         <div className="flex items-center gap-2">
                                           <input
-                                            type="number" min={0} max={a.max_score ?? undefined} step={0.5}
-                                            placeholder={a.max_score != null ? `0 – ${a.max_score}` : "Grade (pts)"}
+                                            type="number" min={0} max={a.max_score} step={0.5}
+                                            placeholder={`0 – ${a.max_score}`}
                                             value={gradeInputs[s.id]?.grade ?? ""}
                                             onChange={(e) => setGradeInputs((prev) => ({ ...prev, [s.id]: { ...prev[s.id] ?? { grade: "", feedback: "" }, grade: e.target.value } }))}
                                             className="w-32 border-2 border-ink rounded-xl px-3 py-1.5 bg-background text-sm font-mono focus:outline-none"
                                           />
-                                          {a.max_score != null && <span className="text-xs font-mono text-muted-foreground">/ {a.max_score} pts</span>}
+                                          <span className="text-xs font-mono text-muted-foreground">/ {a.max_score} pts</span>
                                           <button
                                             onClick={() => handleMarkReviewed(s.id, a.id)}
                                             disabled={gradingId === s.id}
@@ -924,171 +918,318 @@ function ClassDetail() {
       {tab === "grades" && (
         <>
           <Section title="Grade configuration">
-            <p className="text-sm text-muted-foreground mb-4">
-              Select which exams and assignments to include, then set a weight for each. The combined score is normalised automatically — weights don't need to sum to 100.
-            </p>
-
-            {/* Exams picker */}
-            {exams.length > 0 && (
-              <div className="mb-6">
-                <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">Exams</div>
-                <div className="space-y-2">
-                  {exams.map((exam: any) => {
-                    const selected = gradeItems.find((i) => i.type === "exam" && i.id === exam.id);
+            {/* Currently saved config summary */}
+            <div className="mb-5 rounded-2xl border-2 border-ink/20 bg-secondary/40 px-4 py-3">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-2">Currently saved</div>
+              {savedGradeItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground font-mono">Not configured yet</p>
+              ) : (
+                <div className="flex flex-wrap gap-2 items-center">
+                  {savedGradeItems.map((item) => {
+                    const exam = item.type === "exam" ? (exams as any[]).find((e) => e.id === item.id) : null;
+                    const assign = item.type === "assignment" ? (assignments as any[]).find((a) => a.id === item.id) : null;
+                    const label = exam?.title ?? assign?.title ?? item.id;
+                    const savedTotal = savedGradeItems.reduce((s, i) => s + i.weight, 0);
+                    const contribution = savedTotal > 0 ? Math.round((item.weight / savedTotal) * 100) : 0;
                     return (
-                      <div key={exam.id} className={`flex items-center gap-3 rounded-xl border-2 px-4 py-3 transition-colors ${selected ? "border-violet bg-violet/5" : "border-ink/20 bg-background"}`}>
-                        <input
-                          type="checkbox"
-                          checked={!!selected}
-                          onChange={() => toggleItem("exam", exam.id)}
-                          className="w-4 h-4 accent-violet"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <span className="font-semibold text-sm">{exam.title}</span>
-                          <span className={`ml-2 px-2 py-0.5 rounded-full border border-ink text-[10px] font-mono uppercase ${EXAM_STATUS_STYLE[exam.status] ?? "bg-secondary"}`}>{exam.status}</span>
-                        </div>
-                        {selected && (
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <input
-                              type="number" min={0} step={1} placeholder="weight"
-                              value={selected.weight || ""}
-                              onChange={(e) => setItemWeight("exam", exam.id, parseFloat(e.target.value) || 0)}
-                              className="w-20 border-2 border-ink rounded-xl px-3 py-1.5 text-sm font-mono bg-background focus:outline-none"
-                            />
-                            <span className="text-xs text-muted-foreground font-mono">pts</span>
-                          </div>
-                        )}
-                      </div>
+                      <span key={`saved-${item.type}-${item.id}`}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border-2 border-ink/30 text-xs font-mono ${item.type === "exam" ? "bg-violet/10" : "bg-sky/10"}`}>
+                        <span className="font-bold">{label}</span>
+                        <span className="text-muted-foreground">{item.weight}pts · {contribution}%</span>
+                      </span>
                     );
                   })}
+                  <span className="text-xs font-mono text-muted-foreground ml-1">
+                    Total: <strong>{savedGradeItems.reduce((s, i) => s + i.weight, 0)}</strong>
+                  </span>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
-            {/* Assignments picker */}
-            {assignments.length > 0 && (
-              <div className="mb-6">
-                <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">Assignments</div>
-                <div className="space-y-2">
-                  {assignments.map((a: any) => {
-                    const selected = gradeItems.find((i) => i.type === "assignment" && i.id === a.id);
-                    return (
-                      <div key={a.id} className={`flex items-center gap-3 rounded-xl border-2 px-4 py-3 transition-colors ${selected ? "border-violet bg-violet/5" : "border-ink/20 bg-background"}`}>
-                        <input
-                          type="checkbox"
-                          checked={!!selected}
-                          onChange={() => toggleItem("assignment", a.id)}
-                          className="w-4 h-4 accent-violet"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <span className="font-semibold text-sm">{a.title}</span>
-                          {a.max_score != null && <span className="ml-2 text-xs font-mono text-muted-foreground">max {a.max_score} pts</span>}
-                        </div>
-                        {selected && (
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <input
-                              type="number" min={0} step={1} placeholder="weight"
-                              value={selected.weight || ""}
-                              onChange={(e) => setItemWeight("assignment", a.id, parseFloat(e.target.value) || 0)}
-                              className="w-20 border-2 border-ink rounded-xl px-3 py-1.5 text-sm font-mono bg-background focus:outline-none"
-                            />
-                            <span className="text-xs text-muted-foreground font-mono">pts</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {exams.length === 0 && assignments.length === 0 && (
+            {exams.length === 0 && assignments.length === 0 ? (
               <Empty title="No exams or assignments yet" hint="Create some exams and assignments first, then configure grade weights here." />
-            )}
-
-            {/* Weight summary */}
-            {gradeItems.length > 0 && (() => {
+            ) : (() => {
               const totalGradeWeight = gradeItems.reduce((s, i) => s + i.weight, 0);
               const weightOver = totalGradeWeight > 100;
+              const excludedExams = exams.filter((e: any) => !gradeItems.find((i) => i.type === "exam" && i.id === e.id));
+              const excludedAssignments = assignments.filter((a: any) => !gradeItems.find((i) => i.type === "assignment" && i.id === a.id));
+
               return (
                 <>
-                  <div className="mb-2 flex items-center gap-3 flex-wrap text-sm font-mono">
-                    <span className="text-muted-foreground">Selected:</span>
-                    {gradeItems.map((i) => {
-                      const label = exams.find((e: any) => e.id === i.id)?.title ?? assignments.find((a: any) => a.id === i.id)?.title ?? i.id;
-                      return <span key={`${i.type}-${i.id}`} className="px-2 py-0.5 rounded-full border-2 border-ink bg-secondary text-xs">{label}: <strong>{i.weight}</strong></span>;
-                    })}
-                    <span className={`font-mono text-sm ${weightOver ? "text-pink font-bold" : "text-muted-foreground"}`}>
-                      Total: <strong>{totalGradeWeight}</strong> / 100
-                    </span>
-                  </div>
-                  {weightOver && (
-                    <p className="mb-4 text-xs font-mono text-pink">
-                      Over by {totalGradeWeight - 100} — reduce weights before saving
-                    </p>
+                  {/* Included items — card grid */}
+                  {gradeItems.length > 0 ? (
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                      {gradeItems.map((item) => {
+                        const exam = item.type === "exam" ? (exams as any[]).find((e) => e.id === item.id) : null;
+                        const assign = item.type === "assignment" ? (assignments as any[]).find((a) => a.id === item.id) : null;
+                        const label = exam?.title ?? assign?.title ?? item.id;
+                        const contribution = totalGradeWeight > 0 ? Math.round((item.weight / totalGradeWeight) * 100) : 0;
+                        return (
+                          <div key={`${item.type}-${item.id}`} className={`rounded-2xl border-2 border-ink p-4 space-y-3 ${item.type === "exam" ? "bg-violet/5" : "bg-sky/5"}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+                                  {item.type === "exam" ? "Exam" : "Assignment"}
+                                  {exam && <span className={`ml-1.5 px-1.5 py-0.5 rounded-full border border-ink/40 text-[9px] ${EXAM_STATUS_STYLE[exam.status] ?? "bg-secondary"}`}>{exam.status}</span>}
+                                </div>
+                                <div className="font-display font-bold text-sm leading-tight mt-0.5 truncate">{label}</div>
+                              </div>
+                              <button
+                                onClick={() => toggleItem(item.type, item.id)}
+                                className="w-6 h-6 shrink-0 rounded-full border-2 border-ink flex items-center justify-center text-xs hover:bg-pink hover:text-white transition-colors"
+                                title="Remove"
+                              >✕</button>
+                            </div>
+
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="range" min={0} max={100} step={1}
+                                  value={item.weight}
+                                  onChange={(e) => setItemWeight(item.type, item.id, parseFloat(e.target.value))}
+                                  className="flex-1 accent-violet h-2 cursor-pointer"
+                                />
+                                <input
+                                  type="number" min={0} max={100} step={1}
+                                  value={item.weight || ""}
+                                  onChange={(e) => setItemWeight(item.type, item.id, parseFloat(e.target.value) || 0)}
+                                  className="w-14 border-2 border-ink rounded-xl px-2 py-1 text-sm font-mono bg-background focus:outline-none text-center"
+                                />
+                              </div>
+                              <div className="text-xs font-mono text-muted-foreground">
+                                Contributes <span className="font-bold text-foreground">{contribution}%</span> of grade
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground mb-4">No items included yet. Add from the list below.</p>
                   )}
-                  <div className="flex gap-3">
-                    <WakeoutButton onClick={handleSaveConfig} disabled={savingConfig || gradeItems.length === 0 || weightOver}>
-                      {savingConfig ? "Saving…" : "Save config"}
-                    </WakeoutButton>
-                    <WakeoutButton variant="secondary" onClick={handleLoadReport} disabled={loadingReport || gradeItems.length === 0 || weightOver}>
-                      {loadingReport ? "Loading…" : "Preview report"}
-                    </WakeoutButton>
-                  </div>
+
+                  {/* Not included — pill buttons */}
+                  {(excludedExams.length > 0 || excludedAssignments.length > 0) && (
+                    <div className="mb-6">
+                      <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">Not included</div>
+                      <div className="flex flex-wrap gap-2">
+                        {(excludedExams as any[]).map((exam) => (
+                          <button key={exam.id} onClick={() => toggleItem("exam", exam.id)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 border-ink/30 bg-card text-sm font-mono hover:border-violet hover:bg-violet/5 transition-colors">
+                            <span className="text-violet font-bold">+</span>
+                            {exam.title}
+                            <span className={`px-1.5 py-0.5 rounded-full border border-ink/30 text-[9px] uppercase ${EXAM_STATUS_STYLE[exam.status] ?? "bg-secondary"}`}>{exam.status}</span>
+                          </button>
+                        ))}
+                        {(excludedAssignments as any[]).map((a) => (
+                          <button key={a.id} onClick={() => toggleItem("assignment", a.id)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 border-ink/30 bg-card text-sm font-mono hover:border-sky hover:bg-sky/5 transition-colors">
+                            <span className="text-sky font-bold">+</span>
+                            {a.title}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Total weight bar + save */}
+                  {gradeItems.length > 0 && (
+                    <div className="space-y-3">
+                      <div>
+                        <div className="flex justify-between mb-1 text-xs font-mono">
+                          <span className="text-muted-foreground">Total weight</span>
+                          <span className={weightOver ? "text-pink font-bold" : totalGradeWeight === 100 ? "text-green-600 font-bold" : "text-foreground"}>
+                            {totalGradeWeight} / 100{totalGradeWeight === 100 ? " ✓" : ""}
+                          </span>
+                        </div>
+                        <div className="h-2.5 rounded-full bg-secondary border border-ink/10 overflow-hidden">
+                          <div className={`h-full rounded-full transition-all ${weightOver ? "bg-pink" : totalGradeWeight === 100 ? "bg-lime" : "bg-violet"}`}
+                            style={{ width: `${Math.min(totalGradeWeight, 100)}%` }} />
+                        </div>
+                        {weightOver && <p className="mt-1 text-xs font-mono text-pink">Over by {totalGradeWeight - 100} — reduce weights before saving</p>}
+                      </div>
+                      <div className="flex gap-3">
+                        <WakeoutButton onClick={handleSaveConfig} disabled={savingConfig || weightOver}>
+                          {savingConfig ? "Saving…" : "Save config"}
+                        </WakeoutButton>
+                        <WakeoutButton variant="secondary" onClick={handleLoadReport} disabled={loadingReport || weightOver}>
+                          {loadingReport ? "Loading…" : "Refresh report"}
+                        </WakeoutButton>
+                      </div>
+                    </div>
+                  )}
                 </>
               );
             })()}
           </Section>
 
           {/* Grade report table */}
-          {gradeReport && (
-            <Section title="Grade report" action={
-              <WakeoutButton size="sm" variant="secondary" onClick={handleExportGradeCSV}>↓ Export CSV</WakeoutButton>
-            }>
-              <Card>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-xs font-mono uppercase tracking-widest text-muted-foreground border-b-2 border-ink">
-                        <th className="py-3 pr-4">Student</th>
-                        {gradeReport.items.map((item) => (
-                          <th key={`${item.type}-${item.id}`} className="py-3 pr-4 whitespace-nowrap">{item.label}<br /><span className="text-[10px] normal-case">w={item.weight}</span></th>
-                        ))}
-                        <th className="py-3 pr-4">Total %</th>
-                        <th className="py-3">Grade</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y-2 divide-ink/10">
-                      {gradeReport.studentGrades.map((sg) => (
-                        <tr key={sg.studentId}>
-                          <td className="py-3 pr-4 font-semibold">{sg.studentName}</td>
-                          {sg.breakdown.map((b, idx) => (
-                            <td key={idx} className="py-3 pr-4 font-mono text-xs">
-                              <span className="font-semibold text-sm">{b.contribution} / {b.weight}</span>
-                              <br />
-                              <span className="text-muted-foreground">({b.score}/{b.maxScore} raw)</span>
-                            </td>
-                          ))}
-                          <td className="py-3 pr-4 font-mono font-semibold">{sg.pct}%</td>
-                          <td className="py-3">
-                            <span className={`px-2.5 py-1 rounded-full border-2 border-ink text-xs font-mono font-bold ${
-                              sg.grade === "A" ? "bg-lime" : sg.grade === "B" ? "bg-sky" : sg.grade === "C" ? "bg-amber" : sg.grade === "D" ? "bg-violet text-violet-foreground" : "bg-pink text-white"
-                            }`}>
-                              {sg.grade}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                      {gradeReport.studentGrades.length === 0 && (
-                        <tr><td colSpan={gradeReport.items.length + 3} className="py-6 text-center text-muted-foreground">No students enrolled</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            </Section>
+          {loadingReport && (
+            <div className="text-center py-10 text-muted-foreground text-sm">Loading grade report…</div>
           )}
+          {gradeReport && !loadingReport && (() => {
+            const totalW = gradeItems.reduce((s, i) => s + i.weight, 0);
+            return (
+              <Section title="Grade report" action={
+                <WakeoutButton size="sm" variant="secondary" onClick={handleExportGradeCSV}>↓ Export CSV</WakeoutButton>
+              }>
+                <Card>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs font-mono uppercase tracking-widest text-muted-foreground border-b-2 border-ink">
+                          <th className="py-3 pr-4">Student</th>
+                          {gradeReport.items.map((item) => {
+                            const gi = gradeItems.find((i) => i.id === item.id);
+                            return (
+                              <th key={`${item.type}-${item.id}`} className="py-3 pr-4 whitespace-nowrap">
+                                <div>{item.label}</div>
+                                <div className="flex items-center gap-1 mt-1">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={gi?.weight ?? item.weight}
+                                    onChange={(e) => setItemWeight(item.type as "exam" | "assignment", item.id, parseFloat(e.target.value) || 0)}
+                                    className="w-14 border-2 border-ink rounded-lg px-2 py-0.5 text-xs font-mono bg-background normal-case focus:outline-none focus:ring-1 focus:ring-violet"
+                                  />
+                                  <span className="text-[10px] normal-case">pts</span>
+                                </div>
+                              </th>
+                            );
+                          })}
+                          <th className="py-3 pr-4">Total %</th>
+                          <th className="py-3">Grade</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y-2 divide-ink/10">
+                        {gradeReport.studentGrades.map((sg) => {
+                          let rawScore = 0;
+                          const breakdown = sg.breakdown.map((b, idx) => {
+                            const itemId = gradeReport.items[idx]?.id;
+                            const gi = gradeItems.find((i) => i.id === itemId);
+                            const w = gi?.weight ?? b.weight;
+                            const contribution = b.maxScore > 0 ? (b.score / b.maxScore) * w : 0;
+                            rawScore += contribution;
+                            return { ...b, weight: w, contribution: Math.round(contribution * 10) / 10 };
+                          });
+                          const pct = totalW > 0 ? Math.round((rawScore / totalW) * 1000) / 10 : 0;
+                          const grade = letterGrade(pct);
+                          return (
+                            <tr key={sg.studentId}>
+                              <td className="py-3 pr-4 font-semibold">{sg.studentName}</td>
+                              {breakdown.map((b, idx) => (
+                                <td key={idx} className="py-3 pr-4 font-mono text-xs">
+                                  <span className="font-semibold text-sm">{b.contribution} / {b.weight}</span>
+                                  <br />
+                                  <span className="text-muted-foreground">({b.score}/{b.maxScore} raw)</span>
+                                </td>
+                              ))}
+                              <td className="py-3 pr-4 font-mono font-semibold">{pct}%</td>
+                              <td className="py-3">
+                                <span className={`px-2.5 py-1 rounded-full border-2 border-ink text-xs font-mono font-bold ${
+                                  grade === "A" ? "bg-lime" : grade === "B" ? "bg-sky" : grade === "C" ? "bg-amber" : grade === "D" ? "bg-violet text-violet-foreground" : "bg-pink text-white"
+                                }`}>
+                                  {grade}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {gradeReport.studentGrades.length === 0 && (
+                          <tr><td colSpan={gradeReport.items.length + 3} className="py-6 text-center text-muted-foreground">No students enrolled</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              </Section>
+            );
+          })()}
         </>
+      )}
+
+      {annModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => { if (!isPosting) setAnnModal(false); }}>
+          <div className="bg-card border-2 border-ink rounded-2xl shadow-brut w-full max-w-lg p-6 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-display font-bold text-lg">New announcement</h2>
+              <button onClick={() => setAnnModal(false)} disabled={isPosting} className="text-muted-foreground hover:text-foreground text-xl leading-none">✕</button>
+            </div>
+            <input placeholder="Title" value={annTitle} onChange={(e) => setAnnTitle(e.target.value)} className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
+            <textarea rows={4} placeholder="What's the news?" value={annBody} onChange={(e) => setAnnBody(e.target.value)} className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background resize-none" />
+            <div className="flex gap-3 pt-1">
+              <WakeoutButton onClick={handlePostAnnouncement} disabled={isPosting || !annTitle.trim() || !annBody.trim()}>
+                {isPosting ? "Posting…" : "Post"}
+              </WakeoutButton>
+              <WakeoutButton variant="secondary" onClick={() => setAnnModal(false)} disabled={isPosting}>Cancel</WakeoutButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {noteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => { if (!isUploadingNote) setNoteModal(false); }}>
+          <div className="bg-card border-2 border-ink rounded-2xl shadow-brut w-full max-w-lg p-6 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-display font-bold text-lg">Upload note</h2>
+              <button onClick={() => setNoteModal(false)} disabled={isUploadingNote} className="text-muted-foreground hover:text-foreground text-xl leading-none">✕</button>
+            </div>
+            <input value={noteTitle} onChange={(e) => setNoteTitle(e.target.value)} placeholder="Title (required)" className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
+            <input value={noteDesc} onChange={(e) => setNoteDesc(e.target.value)} placeholder="Description (optional)" className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
+            <label className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-background cursor-pointer hover:bg-secondary transition-colors">
+              <Upload className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className="flex-1 text-sm text-muted-foreground truncate">{noteFile ? noteFile.name : "Attach a file (PDF, image, Word, etc.)"}</span>
+              <input ref={noteFileRef} type="file" className="hidden" onChange={(e) => setNoteFile(e.target.files?.[0] ?? null)} />
+            </label>
+            {noteFile && <div className="text-xs font-mono text-muted-foreground">{detectType(noteFile.name).toUpperCase()} · {(noteFile.size / 1024).toFixed(1)} KB</div>}
+            <div className="flex gap-3 pt-1">
+              <WakeoutButton onClick={handleAddNote} disabled={isUploadingNote || !noteTitle.trim() || !noteFile}>
+                {isUploadingNote ? "Uploading…" : "Upload note"}
+              </WakeoutButton>
+              <WakeoutButton variant="secondary" onClick={() => setNoteModal(false)} disabled={isUploadingNote}>Cancel</WakeoutButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {assModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => { if (!isCreatingAss) setAssModal(false); }}>
+          <div className="bg-card border-2 border-ink rounded-2xl shadow-brut w-full max-w-lg p-6 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-display font-bold text-lg">New assignment</h2>
+              <button onClick={() => setAssModal(false)} disabled={isCreatingAss} className="text-muted-foreground hover:text-foreground text-xl leading-none">✕</button>
+            </div>
+            <input value={assTitle} onChange={(e) => setAssTitle(e.target.value)} placeholder="Title (required)" className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
+            <textarea rows={3} value={assDesc} onChange={(e) => setAssDesc(e.target.value)} placeholder="Instructions / description (optional)" className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background resize-none" />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground block mb-1">Start date</label>
+                <input type="datetime-local" min={localNow()} value={assStartAt} onChange={(e) => setAssStartAt(e.target.value)} className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
+              </div>
+              <div>
+                <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground block mb-1">End date</label>
+                <input type="datetime-local" value={assEndAt} onChange={(e) => setAssEndAt(e.target.value)} className="w-full border-2 border-ink rounded-xl px-4 py-3 bg-background" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-mono uppercase tracking-widest text-muted-foreground block mb-1">Max score (pts) — required</label>
+              <input type="number" min={1} max={100} step={0.5} value={assMaxScore} onChange={(e) => setAssMaxScore(e.target.value)} placeholder="e.g. 100" className="w-40 border-2 border-ink rounded-xl px-4 py-3 bg-background" />
+            </div>
+            <label className="flex items-center gap-3 border-2 border-ink rounded-xl px-4 py-3 bg-background cursor-pointer hover:bg-secondary transition-colors">
+              <Upload className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className="flex-1 text-sm text-muted-foreground truncate">{assFile ? assFile.name : "Attach a file (optional)"}</span>
+              <input ref={assFileRef} type="file" className="hidden" onChange={(e) => setAssFile(e.target.files?.[0] ?? null)} />
+            </label>
+            {assFile && <div className="text-xs font-mono text-muted-foreground">{detectType(assFile.name).toUpperCase()} · {(assFile.size / 1024).toFixed(1)} KB</div>}
+            <div className="flex gap-3 pt-1">
+              <WakeoutButton onClick={handleCreateAssignment} disabled={isCreatingAss || !assTitle.trim() || !assStartAt || !assEndAt || !assMaxScore.trim() || parseFloat(assMaxScore) <= 0 || parseFloat(assMaxScore) > 100}>
+                {isCreatingAss ? "Creating…" : "Create assignment"}
+              </WakeoutButton>
+              <WakeoutButton variant="secondary" onClick={() => setAssModal(false)} disabled={isCreatingAss}>Cancel</WakeoutButton>
+            </div>
+          </div>
+        </div>
       )}
 
       <ConfirmModal

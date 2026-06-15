@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { Card, PageHeader } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import {
@@ -34,6 +35,7 @@ export function NotificationsPage({ initialNotifications }: { initialNotificatio
   const [marking, setMarking] = useState<string | null>(null);
   const unreadCount = notifications.filter((n) => !n.readAt).length;
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   async function handleMarkRead(id: string) {
     setMarking(id);
@@ -102,9 +104,12 @@ export function NotificationsPage({ initialNotifications }: { initialNotificatio
                       <div className="font-display font-bold mt-0.5">{n.title}</div>
                       {n.body && <p className="text-sm text-muted-foreground mt-1">{n.body}</p>}
                       {n.link && (
-                        <a href={n.link} className="text-xs font-mono underline text-sky mt-1 block">
+                        <button
+                          onClick={() => navigate({ to: n.link as any })}
+                          className="text-xs font-mono underline text-sky mt-1 block"
+                        >
                           View →
-                        </a>
+                        </button>
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">

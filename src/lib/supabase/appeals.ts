@@ -4,7 +4,7 @@ import { pushNotification } from "./notifications";
 import { writeAudit } from "./audit";
 import { APPEAL } from "@/lib/constants";
 
-const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
+const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
 export type AppealType = "score" | "integrity";
 export type AppealStatus = "pending" | "approved" | "rejected";

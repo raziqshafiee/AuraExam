@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
 
-const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
+const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
 export const getStudentDashboardData = createServerFn({ method: "GET" })
   .handler(async () => {

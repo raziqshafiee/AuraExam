@@ -43,22 +43,6 @@ async function migrate() {
        WHERE status = 'live'
          AND end_time <= now();
 
-      -- live -> closed : every enrolled student already has a terminal submission
-      UPDATE exams e
-         SET status = 'closed'
-       WHERE e.status = 'live'
-         AND EXISTS (SELECT 1 FROM class_enrollments ce WHERE ce.class_id = e.class_id)
-         AND NOT EXISTS (
-           SELECT 1 FROM class_enrollments ce
-            WHERE ce.class_id = e.class_id
-              AND NOT EXISTS (
-                SELECT 1 FROM submissions s
-                 WHERE s.exam_id = e.id
-                   AND s.student_id = ce.student_id
-                   AND s.status IN ('submitted','graded','flagged')
-              )
-         );
-
       -- closed -> graded : has submissions and no essay answer is still ungraded
       UPDATE exams e
          SET status = 'graded'

@@ -1,11 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
 
-const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
+const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
-export type QuestionMCQMeta = { options: [string, string, string, string]; correct: 0 | 1 | 2 | 3 };
-export type QuestionTFMeta = { correct: boolean };
-export type QuestionEssayMeta = { model_answer: string; rubric: string };
+export type QuestionMCQMeta = { options: [string, string, string, string]; option_images?: [string | null, string | null, string | null, string | null]; correct: 0 | 1 | 2 | 3; image_url?: string };
+export type QuestionTFMeta = { correct: boolean; image_url?: string };
+export type QuestionEssayMeta = { model_answer: string; rubric: string; image_url?: string };
 export type QuestionMeta = QuestionMCQMeta | QuestionTFMeta | QuestionEssayMeta;
 
 export type Question = {

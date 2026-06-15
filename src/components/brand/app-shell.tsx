@@ -16,6 +16,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import { ConfirmModal } from "./confirm-modal";
 
 type NavItem = { to: string; label: string; icon: LucideIcon; badge?: "inbox" | "appeals"; mobileHidden?: boolean };
 
@@ -212,7 +213,16 @@ function Breadcrumbs() {
     const to = "/" + segments.slice(0, i + 1).join("/");
     if (UUID_RE.test(seg)) {
       const name = findEntityName(loaderDataList, segments[i - 1] ?? "");
-      if (name) crumbs.push({ label: name, to });
+      if (name) {
+        // Bare UUID paths have no route — resolve to the nearest valid sub-route.
+        const prevSeg = segments[i - 1] ?? "";
+        const roleSeg = segments[0] ?? "";
+        let resolvedTo = to;
+        if (prevSeg === "exams") {
+          resolvedTo = roleSeg === "lecturer" ? `${to}/edit` : `${to}/result`;
+        }
+        crumbs.push({ label: name, to: resolvedTo });
+      }
       continue;
     }
     const label = SEGMENT_LABEL[seg];
@@ -290,13 +300,19 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const unreadCount = badges.inbox;
 
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
+
   const doLogout = async () => {
+    setLogoutLoading(true);
     try {
       await signOut();
       toast.success("Logged out successfully");
       navigate({ to: "/" });
     } catch (error: any) {
       toast.error(error.message || "Failed to log out");
+      setLogoutLoading(false);
+      setLogoutOpen(false);
     }
   };
 
@@ -379,7 +395,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {/* Logout */}
         <div className="p-3 border-t-2 border-ink">
           <button
-            onClick={doLogout}
+            onClick={() => setLogoutOpen(true)}
             title={collapsed ? "Log out" : undefined}
             className={`w-full flex items-center ${collapsed ? "justify-center px-0" : "gap-2.5 px-3"} py-2 rounded-xl text-sm font-semibold hover:bg-accent border-2 border-transparent`}
           >
@@ -422,7 +438,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <Link to={`/${role}/profile`}><User className="w-4 h-4 mr-2" /> Profile</Link>
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={doLogout}><LogOut className="w-4 h-4 mr-2" /> Log out</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLogoutOpen(true)}><LogOut className="w-4 h-4 mr-2" /> Log out</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -430,6 +446,16 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="flex-1 p-4 md:p-8 pb-20 md:pb-8 max-w-7xl w-full mx-auto">{children}</main>
       </div>
       <BottomNav role={role} pathname={pathname} badges={badges} />
+      <ConfirmModal
+        open={logoutOpen}
+        title="Log out?"
+        message="You will be signed out of your account."
+        confirmLabel="Log out"
+        danger
+        loading={logoutLoading}
+        onConfirm={doLogout}
+        onClose={() => setLogoutOpen(false)}
+      />
     </div>
   );
 }

@@ -18,11 +18,15 @@ export type ExportSubmission = {
   flags: number;
   submittedAt: string | null;
 };
+export type ExportAssignment = { id: string; title: string; maxScore: number };
+export type ExportAssignmentSub = { studentId: string; assignmentId: string; grade: number | null };
 export type ClassExportData = {
   classInfo: { id: string; name: string; code: string };
   students: ExportStudent[];
   exams: ExportExam[];
   submissions: ExportSubmission[];
+  assignments: ExportAssignment[];
+  assignmentSubs: ExportAssignmentSub[];
 };
 
 export const getClassExportData = createServerFn({ method: "GET" })
@@ -84,6 +88,32 @@ export const getClassExportData = createServerFn({ method: "GET" })
       if (s.total > (examTotalMap[s.examId] ?? 0)) examTotalMap[s.examId] = s.total;
     }
 
+    const { data: assignRows } = await db(supabase)
+      .from("class_assignments")
+      .select("id, title, max_score")
+      .eq("class_id", data.classId)
+      .order("created_at", { ascending: true });
+
+    const assignments: ExportAssignment[] = ((assignRows ?? []) as any[]).map((a: any) => ({
+      id: a.id,
+      title: a.title,
+      maxScore: a.max_score ?? 0,
+    }));
+
+    const assignmentIds = assignments.map((a) => a.id);
+    let assignmentSubs: ExportAssignmentSub[] = [];
+    if (assignmentIds.length > 0) {
+      const { data: asubRows } = await db(supabase)
+        .from("assignment_submissions")
+        .select("student_id, assignment_id, grade")
+        .in("assignment_id", assignmentIds);
+      assignmentSubs = ((asubRows ?? []) as any[]).map((s: any) => ({
+        studentId: s.student_id,
+        assignmentId: s.assignment_id,
+        grade: s.grade ?? null,
+      }));
+    }
+
     return {
       classInfo: { id: cls.id, name: cls.name, code: cls.code },
       students,
@@ -95,5 +125,7 @@ export const getClassExportData = createServerFn({ method: "GET" })
         status: e.status,
       })),
       submissions,
+      assignments,
+      assignmentSubs,
     };
   });

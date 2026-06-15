@@ -359,7 +359,7 @@ function ClassDetail() {
                               }`}
                             >
                               {mySub.status === "reviewed" && mySub.grade != null
-                                ? `${mySub.grade}${a.max_score != null ? ` / ${a.max_score}` : ""} pts`
+                                ? `${mySub.grade} / ${a.max_score} pts`
                                 : mySub.status}
                             </span>
                           </div>
@@ -468,6 +468,8 @@ function ClassDetail() {
                     </div>
                     <div className="text-xs font-mono text-muted-foreground mt-1">
                       {fmtMY(e.start_time, { dateStyle: "medium", timeStyle: "short" })}
+                      {" → "}
+                      {fmtMY(e.end_time, { dateStyle: "medium", timeStyle: "short" })}
                     </div>
                     <WakeoutButton asChild size="sm" className="mt-3" variant="secondary">
                       {examEnded ? (

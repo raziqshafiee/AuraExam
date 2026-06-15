@@ -1,7 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
+import { MY_TZ } from "@/lib/datetime";
 
-const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
+const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
 export const PROCTOR_SNAPSHOT_BUCKET = "proctor-snapshots";
 
@@ -68,7 +69,7 @@ export const recordProctorEvent = createServerFn({ method: "POST" })
       .from("flag_reasons")
       .insert({
         submission_id: data.submissionId,
-        time: new Date().toLocaleTimeString("en-MY", { timeStyle: "short", timeZone: "Asia/Kuala_Lumpur" }),
+        time: new Date().toLocaleTimeString("en-MY", { timeStyle: "short", timeZone: MY_TZ }),
         type,
         label: data.label?.slice(0, 200) || "Proctor event",
       });
@@ -139,7 +140,7 @@ export const getProctorSnapshots = createServerFn({ method: "GET" })
       });
 
     const paths = (files ?? [])
-      .filter((f: any) => f.name && !f.name.startsWith("."))
+      .filter((f: any) => f.name && !f.name.startsWith(".") && f.name.endsWith(".jpg"))
       .map((f: any) => `${submissionId}/${f.name}`);
 
     if (paths.length === 0) return { snapshots: [] as { url: string; takenAt: string | null }[] };

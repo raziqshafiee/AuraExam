@@ -3,7 +3,7 @@ import { createClient } from "./server";
 import { requireRole } from "./authz";
 import { createAdminClient } from "./admin-client";
 
-const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
+const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
 export type GradeConfigItem = {
   type: "exam" | "assignment";
@@ -39,7 +39,7 @@ export const saveGradeConfig = createServerFn({ method: "POST" })
     if (totalWeight > 100) throw new Error(`Total weight is ${totalWeight} — cannot exceed 100`);
 
     // Use admin client to bypass RLS — auth ownership already verified above.
-    const admin = createAdminClient() as any;
+    const admin = createAdminClient();
     const { error } = await admin
       .from("class_grade_config")
       .upsert({ class_id: data.classId, items: data.items, updated_at: new Date().toISOString() }, { onConflict: "class_id" });
@@ -55,7 +55,9 @@ export const getGradeConfig = createServerFn({ method: "GET" })
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
-    const { data } = await db(supabase)
+    // Use admin client to bypass RLS (same as saveGradeConfig and getGradeReport).
+    const admin = createAdminClient();
+    const { data } = await admin
       .from("class_grade_config")
       .select("items, updated_at")
       .eq("class_id", classId)
@@ -81,7 +83,7 @@ export const getGradeReport = createServerFn({ method: "GET" })
 
     // Use admin client for all data reads — submissions and grade_config are behind
     // RLS that blocks cross-student reads for the lecturer's session token.
-    const admin = createAdminClient() as any;
+    const admin = createAdminClient();
 
     const { data: configRow } = await admin
       .from("class_grade_config").select("items").eq("class_id", classId).maybeSingle();
@@ -179,7 +181,7 @@ export const getMyGrade = createServerFn({ method: "GET" })
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
-    const admin = createAdminClient() as any;
+    const admin = createAdminClient();
 
     const { data: configRow } = await admin
       .from("class_grade_config").select("items, updated_at").eq("class_id", classId).maybeSingle();

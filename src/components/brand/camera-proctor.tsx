@@ -174,6 +174,7 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     if (mode === "monitor") startCamera();
     return cleanup;
   }, []);
@@ -183,6 +184,7 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
   }, [perm, face]);
 
   async function startCamera() {
+    mountedRef.current = true;
     setPerm("requesting");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({

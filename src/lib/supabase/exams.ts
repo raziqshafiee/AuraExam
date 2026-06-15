@@ -3,10 +3,10 @@ import { createClient } from "./server";
 import { createAdminClient } from "./admin-client";
 import { pushNotification } from "./notifications";
 import { writeAudit } from "./audit";
-import { INTEGRITY, ESSAY } from "@/lib/constants";
+import { INTEGRITY, ESSAY, APPEAL } from "@/lib/constants";
 import { MY_TZ } from "@/lib/datetime";
 
-const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
+const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
 function isExamEnded(exam: { status: string; end_time?: string | null }): boolean {
   return (
@@ -202,6 +202,10 @@ export type ExamListItem = {
   questions_count: number;
   status: ExamStatus;
   created_at: string;
+  submissionCount: number;
+  enrolledCount: number;
+  avgScore: number | null;
+  essaysPending: number;
 };
 
 export type ExamDetail = ExamListItem & {
@@ -256,20 +260,59 @@ export const getLecturerExams = createServerFn({ method: "GET" }).handler(
 
     if (error) throw new Error(error.message);
 
-    return (exams ?? []).map((e: any) => ({
-      id: e.id,
-      title: e.title,
-      class_id: e.class_id,
-      classCode: e.classes?.code ?? "",
-      className: e.classes?.name ?? "",
-      start_time: e.start_time,
-      end_time: e.end_time,
-      duration: e.duration,
-      require_camera: e.require_camera ?? false,
-      questions_count: e.questions_count,
-      status: e.status,
-      created_at: e.created_at,
-    })) as ExamListItem[];
+    const examIds = ((exams ?? []) as any[]).map((e: any) => e.id);
+
+    // Submission stats per exam
+    type SubStat = { count: number; pctSum: number; pctCount: number; essaysPending: number };
+    const subStats: Record<string, SubStat> = {};
+    if (examIds.length > 0) {
+      const { data: subs } = await db(supabase)
+        .from("submissions")
+        .select("exam_id, score, total, status")
+        .in("exam_id", examIds)
+        .neq("status", "in-progress");
+      for (const s of (subs ?? []) as any[]) {
+        if (!subStats[s.exam_id]) subStats[s.exam_id] = { count: 0, pctSum: 0, pctCount: 0, essaysPending: 0 };
+        subStats[s.exam_id].count++;
+        if (s.status === "submitted") subStats[s.exam_id].essaysPending++;
+        if (s.score != null && s.total > 0) {
+          subStats[s.exam_id].pctSum += (s.score / s.total) * 100;
+          subStats[s.exam_id].pctCount++;
+        }
+      }
+    }
+
+    // Enrolled student count per class
+    const enrollCounts: Record<string, number> = {};
+    const { data: enrollments } = await db(supabase)
+      .from("class_enrollments")
+      .select("class_id")
+      .in("class_id", classIds);
+    for (const en of (enrollments ?? []) as any[]) {
+      enrollCounts[en.class_id] = (enrollCounts[en.class_id] ?? 0) + 1;
+    }
+
+    return (exams ?? []).map((e: any) => {
+      const stat = subStats[e.id];
+      return {
+        id: e.id,
+        title: e.title,
+        class_id: e.class_id,
+        classCode: e.classes?.code ?? "",
+        className: e.classes?.name ?? "",
+        start_time: e.start_time,
+        end_time: e.end_time,
+        duration: e.duration,
+        require_camera: e.require_camera ?? false,
+        questions_count: e.questions_count,
+        status: e.status,
+        created_at: e.created_at,
+        submissionCount: stat?.count ?? 0,
+        enrolledCount: enrollCounts[e.class_id] ?? 0,
+        avgScore: stat && stat.pctCount > 0 ? Math.round(stat.pctSum / stat.pctCount) : null,
+        essaysPending: stat?.essaysPending ?? 0,
+      };
+    }) as ExamListItem[];
   }
 );
 
@@ -470,7 +513,9 @@ export const updateExam = createServerFn({ method: "POST" })
             )
           );
         }
-      } catch {}
+      } catch (err) {
+        console.error("[exam publish] notification failed:", err);
+      }
       await writeAudit(user.id, {
         action: "Published exam",
         target: data.title,
@@ -715,6 +760,19 @@ export const gradeEssayAnswer = createServerFn({ method: "POST" })
       throw new Error("Forbidden — you do not own this exam");
     }
 
+    if (data.score < 0) throw new Error("Score cannot be negative");
+
+    // Guard against score exceeding the question's point cap.
+    const { data: answerRow } = await db(supabase)
+      .from("essay_answers")
+      .select("question_id, questions!question_id(points)")
+      .eq("id", data.answerId)
+      .single();
+    const maxPoints = (answerRow as any)?.questions?.points ?? null;
+    if (maxPoints !== null && data.score > maxPoints) {
+      throw new Error(`Score cannot exceed ${maxPoints} pts for this question`);
+    }
+
     // 1. Save the essay score
     const { error } = await db(supabase)
       .from("essay_answers")
@@ -772,7 +830,9 @@ export const gradeEssayAnswer = createServerFn({ method: "POST" })
             body: `"${examTitle}" has been fully graded — your final score is ${newScore} pts`,
             link: `/student/exams/${subRow.exam_id}/result`,
           });
-        } catch {}
+        } catch (err) {
+          console.error("[grade essay] notification failed:", err);
+        }
       }
       await writeAudit(user.id, {
         action: "Fully graded exam",
@@ -796,7 +856,7 @@ export const getLecturerExamMonitor = createServerFn({ method: "GET" })
 
     const { data: exam, error: examErr } = await db(supabase)
       .from("exams")
-      .select("id, title, class_id, created_by, classes(code)")
+      .select("id, title, class_id, created_by, end_time, classes(code)")
       .eq("id", examId)
       .single();
 
@@ -806,7 +866,7 @@ export const getLecturerExamMonitor = createServerFn({ method: "GET" })
     const [subsResult, enrollResult] = await Promise.all([
       db(supabase)
         .from("submissions")
-        .select("id, status, flags, submitted_at, last_seen_at, profiles!student_id(name, id)")
+        .select("id, status, flags, score, auto_score, total, submitted_at, last_seen_at, profiles!student_id(name, id)")
         .eq("exam_id", examId),
       db(supabase)
         .from("class_enrollments")
@@ -851,12 +911,16 @@ export const getLecturerExamMonitor = createServerFn({ method: "GET" })
         id: exam.id,
         title: exam.title,
         classCode: exam.classes?.code ?? "",
+        endTime: exam.end_time ?? null,
       },
       submissions: subs.map((s: any) => ({
         id: s.id,
         studentName: s.profiles?.name ?? "Unknown",
         status: s.status,
         flags: s.flags ?? 0,
+        score: s.score ?? null,
+        autoScore: s.auto_score ?? null,
+        total: s.total ?? 0,
         submittedAt: s.submitted_at,
         lastSeenAt: s.last_seen_at ?? null,
         flagReasons: flagsBySubmission[s.id] ?? [],
@@ -1043,10 +1107,16 @@ export const getExamForTaking = createServerFn({ method: "GET" })
 
     // SECURITY: never send answer keys to the client. MCQ.meta.correct,
     // TF.meta.correct, and ESSAY.meta.model_answer/rubric stay server-side
-    // (grading reads them again in submitExam). Only expose what the UI renders.
+    // (grading reads them again in submitExam). image_url and option_images
+    // are display-only and safe to expose.
     const sanitizeMeta = (type: string, meta: any) => {
-      if (type === "MCQ") return { options: meta?.options ?? [] };
-      return null; // TF renders True/False; ESSAY is a free-text box — neither needs meta
+      if (type === "MCQ") return {
+        options: meta?.options ?? [],
+        option_images: meta?.option_images ?? null,
+        image_url: meta?.image_url ?? null,
+      };
+      // TF and ESSAY: only the question image is needed; correct/rubric stay server-side.
+      return { image_url: meta?.image_url ?? null };
     };
 
     let questions = (eqs ?? []).map((eq: any) => ({
@@ -1516,10 +1586,13 @@ export const recordFlag = createServerFn({ method: "POST" })
       });
 
     if (isHardFlag && newFlags >= INTEGRITY.FLAG_THRESHOLD) {
+      // Guard: only write if still in-progress — prevents double-write if two
+      // hard flags race past the threshold check simultaneously.
       await db(supabase)
         .from("submissions")
         .update({ flags: newFlags, status: "flagged", score: 0, auto_score: 0, submitted_at: new Date().toISOString() })
-        .eq("id", data.submissionId);
+        .eq("id", data.submissionId)
+        .eq("status", "in-progress");
 
       try {
         const { data: subRow } = await db(supabase)
@@ -1533,7 +1606,7 @@ export const recordFlag = createServerFn({ method: "POST" })
           userId: user.id,
           type: "exam_flagged",
           title: "Exam auto-submitted",
-          body: `Your exam "${examTitle}" was auto-submitted due to 3 integrity flags. You have 7 days to file an appeal.`,
+          body: `Your exam "${examTitle}" was auto-submitted due to ${INTEGRITY.FLAG_THRESHOLD} integrity flags. You have ${Math.floor(APPEAL.WINDOW_MS / 86_400_000)} days to file an appeal.`,
           link: `/student/exams`,
         });
         // Notify the lecturer so they can review the flagged submission promptly.
@@ -1551,7 +1624,9 @@ export const recordFlag = createServerFn({ method: "POST" })
           target: examTitle,
           category: "integrity",
         });
-      } catch {}
+      } catch (err) {
+        console.error("[auto-submit] notification/audit failed:", err);
+      }
 
       return { flags: newFlags, autoSubmitted: true };
     }

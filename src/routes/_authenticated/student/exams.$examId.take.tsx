@@ -7,9 +7,10 @@ import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
 import { getExamForTaking, recordFlag, saveExamProgress, submitExam } from "@/lib/supabase/exams";
 import { recordHeartbeat } from "@/lib/supabase/proctor";
-import { AUTOSAVE, ESSAY } from "@/lib/constants";
+import { AUTOSAVE, ESSAY, INTEGRITY } from "@/lib/constants";
 import { Flag, Camera, ChevronLeft, ChevronRight, AlertTriangle, Maximize, X } from "lucide-react";
 import { toast } from "sonner";
+import { renderMarkdown, stripMarkdown } from "@/lib/render-text";
 
 export const Route = createFileRoute(
   "/_authenticated/student/exams/$examId/take"
@@ -259,8 +260,8 @@ function TakeExam() {
         fullscreenConfirmed = true;
         entryGrace = false;
       } else if (entryGrace) {
-        // Spurious exit during grace — silently re-enter, do not flag.
-        document.documentElement.requestFullscreen().catch(() => {});
+        // Spurious exit during grace — do not flag. Cannot re-request fullscreen
+        // from a fullscreenchange listener (not a user gesture); just suppress.
       } else if (fullscreenConfirmed) {
         fullscreenConfirmed = false;
         sendFlag("fullscreen-exit", "Exited fullscreen during exam");
@@ -447,6 +448,8 @@ function TakeExam() {
     q.type === "MCQ"
       ? (q.meta as any)?.options ?? ["Option A", "Option B", "Option C", "Option D"]
       : [];
+  const mcqOptionImages: (string | null)[] =
+    q.type === "MCQ" ? ((q.meta as any)?.option_images ?? [null, null, null, null]) : [];
 
   const isLast = idx === questions.length - 1;
 
@@ -488,11 +491,11 @@ function TakeExam() {
       </div>
 
       {/* Warning banner after first/second flag */}
-      {integrityFlags > 0 && integrityFlags < 3 && (
+      {integrityFlags > 0 && integrityFlags < INTEGRITY.FLAG_THRESHOLD && (
         <div className="bg-amber/20 border-b-2 border-amber px-6 py-2 flex items-center gap-2 text-xs font-mono text-amber-900">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span>
-            Flag {integrityFlags}/3:{" "}
+            Flag {integrityFlags}/{INTEGRITY.FLAG_THRESHOLD}:{" "}
             {lastFlagType === "multiple-faces" && "Another face was detected on camera — please ensure you are alone."}
             {lastFlagType === "fullscreen-exit" && "You exited fullscreen — stay in fullscreen for the duration of the exam."}
             {lastFlagType === "tab-switch" && "You left the exam tab — keep this tab focused at all times."}
@@ -501,7 +504,7 @@ function TakeExam() {
             {lastFlagType === "right-click" && "Right-click is disabled during the exam."}
             {lastFlagType === "screenshot" && "Screenshot attempt detected."}
             {!lastFlagType && "Integrity violation recorded."}
-            {" "}3 flags will auto-submit your exam with score locked at 0.
+            {" "}{INTEGRITY.FLAG_THRESHOLD} flags will auto-submit your exam with score locked at 0.
           </span>
         </div>
       )}
@@ -537,25 +540,45 @@ function TakeExam() {
             <span className="text-xs font-mono text-ink/40">{q.points} pt</span>
           </div>
 
-          <h2 className="mt-4 font-display font-extrabold text-2xl md:text-3xl">
-            {q.text}
-          </h2>
+          {(q.meta as any)?.image_url && (
+            <img
+              src={(q.meta as any).image_url}
+              alt="Question image"
+              className="mt-4 w-full max-h-72 rounded-xl border-2 border-ink object-contain bg-secondary/30"
+            />
+          )}
+          <h2
+            className="mt-4 font-display font-extrabold text-2xl md:text-3xl"
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(q.text) }}
+          />
 
           {q.type === "MCQ" && (
             <ul className="mt-6 space-y-2">
-              {["A", "B", "C", "D"].map((letter, i) => (
-                <li key={letter}>
-                  <button
-                    onClick={() => setAns(letter)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-ink font-medium text-left ${
-                      answers[q.id] === letter ? "bg-lime shadow-brut-sm" : "bg-card"
-                    }`}
-                  >
-                    <span className="font-mono text-xs shrink-0 w-5">{letter}</span>
-                    <span>{mcqOptions[i] ?? `Option ${letter}`}</span>
-                  </button>
-                </li>
-              ))}
+              {["A", "B", "C", "D"].map((letter, i) => {
+                const hasImg = !!mcqOptionImages[i];
+                return (
+                  <li key={letter}>
+                    <button
+                      onClick={() => setAns(letter)}
+                      className={`w-full flex items-start gap-3 px-4 py-3 rounded-xl border-2 border-ink font-medium text-left transition-colors ${
+                        answers[q.id] === letter ? "bg-lime shadow-brut-sm" : "bg-card hover:bg-secondary"
+                      }`}
+                    >
+                      <span className="font-mono text-xs shrink-0 w-5 mt-0.5">{letter}</span>
+                      <span className="flex-1 min-w-0">
+                        <span dangerouslySetInnerHTML={{ __html: renderMarkdown(mcqOptions[i] ?? `Option ${letter}`) }} />
+                        {hasImg && (
+                          <img
+                            src={mcqOptionImages[i]!}
+                            alt={`Option ${letter}`}
+                            className="mt-2 max-h-36 w-full rounded-lg object-contain border border-ink/20 bg-secondary/20"
+                          />
+                        )}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
 
@@ -732,7 +755,7 @@ function TakeExam() {
                     answerNode = <span className="text-xs text-muted-foreground italic">Unanswered</span>;
                   } else if (qq.type === "MCQ") {
                     const li = ["A", "B", "C", "D"].indexOf(ans);
-                    answerNode = <span className="text-xs font-semibold text-violet">{ans} · <span className="font-normal">{opts[li] ?? ""}</span></span>;
+                    answerNode = <span className="text-xs font-semibold text-violet">{ans} · <span className="font-normal">{stripMarkdown(opts[li] ?? "")}</span></span>;
                   } else if (qq.type === "TF") {
                     answerNode = <span className={`text-xs font-bold ${ans === "True" ? "text-lime-700" : "text-pink"}`}>{ans}</span>;
                   } else {
@@ -749,7 +772,7 @@ function TakeExam() {
                     >
                       <span className="font-mono text-xs font-bold shrink-0 w-5 text-center text-ink/50">{i + 1}</span>
                       <span className="text-xs font-mono uppercase px-1.5 py-0.5 rounded border border-ink/20 text-ink/50 shrink-0">{qq.type}</span>
-                      <span className="flex-1 text-sm text-ink/70 truncate">{qq.text}</span>
+                      <span className="flex-1 text-sm text-ink/70 truncate">{stripMarkdown(qq.text)}</span>
                       <span className="shrink-0">{answerNode}</span>
                       {isFlagged && <Flag className="w-3.5 h-3.5 text-amber shrink-0" />}
                     </button>

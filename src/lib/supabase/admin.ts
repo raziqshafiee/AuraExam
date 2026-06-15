@@ -3,8 +3,8 @@ import { createClient } from "./server";
 import { requireRole } from "./authz";
 import { createAdminClient } from "./admin-client";
 
-const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
-const dbAdmin = (client: ReturnType<typeof createAdminClient>) => client as any;
+const db = (supabase: ReturnType<typeof createClient>) => supabase;
+const dbAdmin = (client: ReturnType<typeof createAdminClient>) => client;
 
 // GET: platform-wide integrity log — all submissions where flags > 0.
 // Uses service role to bypass per-student RLS. Admin observe-only.

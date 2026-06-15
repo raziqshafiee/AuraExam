@@ -4,6 +4,7 @@ import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { getStudentExamResult } from "@/lib/supabase/exams";
 import { AlertTriangle, RefreshCw, CheckCircle, XCircle, FileText, ClipboardX, UserX } from "lucide-react";
 import { fmtMY } from "@/lib/datetime";
+import { renderMarkdown } from "@/lib/render-text";
 
 export const Route = createFileRoute(
   "/_authenticated/student/exams/$examId/result"
@@ -231,6 +232,7 @@ function Result() {
               const isMCQ = q.type === "MCQ";
               const isTF = q.type === "TF";
               const options: string[] = q.meta?.options ?? [];
+              const optionImages: (string | null)[] = (q.meta as any)?.option_images ?? [null, null, null, null];
               const essayGraded = isEssay && q.essayScore !== null;
 
               return (
@@ -240,7 +242,19 @@ function Result() {
                       <span className="shrink-0 w-7 h-7 rounded-full border-2 border-ink bg-secondary flex items-center justify-center text-xs font-mono font-bold">
                         {i + 1}
                       </span>
-                      <p className="text-sm leading-relaxed pt-0.5">{q.text}</p>
+                      <div>
+                        {(q.meta as any)?.image_url && (
+                          <img
+                            src={(q.meta as any).image_url}
+                            alt="Question image"
+                            className="mb-2 rounded-lg border border-ink/20 max-h-40 object-contain"
+                          />
+                        )}
+                        <p
+                          className="text-sm leading-relaxed pt-0.5"
+                          dangerouslySetInnerHTML={{ __html: renderMarkdown(q.text) }}
+                        />
+                      </div>
                     </div>
                     <span className="text-xs font-mono text-muted-foreground shrink-0">
                       {isEssay && essayGraded ? `${q.essayScore} / ${q.points} pts` : `${q.points} pt${q.points !== 1 ? "s" : ""}`}
@@ -266,8 +280,13 @@ function Result() {
                               {isCorrect ? <CheckCircle className="w-4 h-4 text-green-600 shrink-0" />
                                : isWrong ? <XCircle className="w-4 h-4 text-pink shrink-0" />
                                : <span className="w-4 h-4 shrink-0" />}
-                              <span className="font-mono text-xs mr-1">{LETTERS[idx]}.</span>
-                              {opt}
+                              <span className="font-mono text-xs mr-1 shrink-0">{LETTERS[idx]}.</span>
+                              <span className="flex-1">
+                                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(opt) }} />
+                                {optionImages[idx] && (
+                                  <img src={optionImages[idx]!} alt="" className="mt-1 max-h-20 rounded object-contain border border-ink/20" />
+                                )}
+                              </span>
                             </div>
                           );
                         })

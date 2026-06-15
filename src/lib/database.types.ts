@@ -20,25 +20,6 @@ export type Database = {
         };
         Update: Partial<Database["public"]["Tables"]["profiles"]["Insert"]>;
       };
-      classes: {
-        Row: {
-          id: string;
-          code: string;
-          name: string;
-          lecturer_id: string | null;
-          color: string;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          code: string;
-          name: string;
-          lecturer_id?: string | null;
-          color?: string;
-          created_at?: string;
-        };
-        Update: Partial<Database["public"]["Tables"]["classes"]["Insert"]>;
-      };
       class_enrollments: {
         Row: {
           class_id: string;
@@ -62,6 +43,9 @@ export type Database = {
           duration: number;
           questions_count: number;
           status: "draft" | "upcoming" | "live" | "closed" | "graded";
+          shuffle: boolean;
+          require_camera: boolean;
+          subject_weight: number | null;
           created_by: string | null;
           created_at: string;
         };
@@ -73,7 +57,10 @@ export type Database = {
           end_time: string;
           duration: number;
           questions_count?: number;
-          status?: "upcoming" | "live" | "graded" | "draft";
+          status?: "draft" | "upcoming" | "live" | "closed" | "graded";
+          shuffle?: boolean;
+          require_camera?: boolean;
+          subject_weight?: number | null;
           created_by?: string | null;
           created_at?: string;
         };
@@ -88,6 +75,7 @@ export type Database = {
           difficulty: "easy" | "med" | "hard";
           points: number;
           tags: string[];
+          meta: Json | null;
           version: number;
           created_by: string | null;
           created_at: string;
@@ -100,6 +88,7 @@ export type Database = {
           difficulty?: "easy" | "med" | "hard";
           points?: number;
           tags?: string[];
+          meta?: Json | null;
           version?: number;
           created_by?: string | null;
           created_at?: string;
@@ -212,7 +201,7 @@ export type Database = {
           file_url: string | null;
           file_name: string | null;
           file_type: "pdf" | "image" | "file" | null;
-          max_score: number | null;
+          max_score: number;
           start_at: string;
           end_at: string;
           created_at: string;
@@ -226,7 +215,7 @@ export type Database = {
           file_url?: string | null;
           file_name?: string | null;
           file_type?: "pdf" | "image" | "file" | null;
-          max_score?: number | null;
+          max_score: number;
           start_at: string;
           end_at: string;
           created_at?: string;
@@ -315,9 +304,35 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["notifications"]["Insert"]>;
       };
       audit_log: {
-        Row: { id: string; actor_id: string | null; action: string; target: string; created_at: string };
-        Insert: { id?: string; actor_id?: string | null; action: string; target: string; created_at?: string };
+        Row: { id: string; actor_id: string | null; action: string; target: string; category: string; created_at: string };
+        Insert: { id?: string; actor_id?: string | null; action: string; target: string; category?: string; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["audit_log"]["Insert"]>;
+      };
+      class_grade_config: {
+        Row: { id: string; class_id: string; items: Json; updated_at: string | null };
+        Insert: { id?: string; class_id: string; items?: Json; updated_at?: string | null };
+        Update: Partial<Database["public"]["Tables"]["class_grade_config"]["Insert"]>;
+      };
+      classes: {
+        Row: {
+          id: string;
+          code: string;
+          name: string;
+          lecturer_id: string | null;
+          color: string;
+          exam_weight: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          code: string;
+          name: string;
+          lecturer_id?: string | null;
+          color?: string;
+          exam_weight?: number;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["classes"]["Insert"]>;
       };
     };
     Views: Record<string, never>;
@@ -341,3 +356,4 @@ export type DbAssignmentSubmission = Database["public"]["Tables"]["assignment_su
 export type DbAppeal = Database["public"]["Tables"]["appeals"]["Row"];
 export type DbNotification = Database["public"]["Tables"]["notifications"]["Row"];
 export type DbAuditEvent = Database["public"]["Tables"]["audit_log"]["Row"];
+export type DbClassGradeConfig = Database["public"]["Tables"]["class_grade_config"]["Row"];
