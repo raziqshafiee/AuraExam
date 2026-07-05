@@ -459,9 +459,16 @@ function ClassDetail() {
                 const examEnded = e.status === "closed" || e.status === "graded";
                 return (
                   <Card key={e.id}>
-                    <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border-2 border-ink text-[10px] font-mono uppercase tracking-widest font-bold ${
+                      e.status === "live"     ? "bg-pink text-white" :
+                      e.status === "upcoming" ? "bg-amber text-ink" :
+                      e.status === "graded"   ? "bg-lime text-ink" :
+                      e.status === "closed"   ? "bg-ink/15 text-ink" :
+                      "bg-secondary text-muted-foreground"
+                    }`}>
+                      {e.status === "live" && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse shrink-0" />}
                       {e.status}
-                    </div>
+                    </span>
                     <div className="font-display font-bold text-lg mt-1">{e.title}</div>
                     <div className="text-sm text-muted-foreground mt-0.5">
                       {e.questions_count || 0} questions · {e.duration} min

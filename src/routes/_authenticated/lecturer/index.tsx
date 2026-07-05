@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { useMemo, useEffect } from "react";
 import { PageHeader, Card, Stat, Section, Empty } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { Countdown } from "@/components/brand/countdown";
@@ -45,6 +45,13 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 function LecturerDashboard() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const id = setInterval(() => router.invalidate(), 30_000);
+    return () => clearInterval(id);
+  }, [router]);
+
   const {
     profile,
     classes,
@@ -195,7 +202,7 @@ function LecturerDashboard() {
                   <div className="flex items-center gap-3 mt-1 flex-wrap">
                     <span className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Users className="w-3.5 h-3.5" />
-                      {e.inProgressCount} / {e.enrolledCount} in progress
+                      {e.inProgressCount} in progress · {e.submittedCount} / {e.enrolledCount} submitted
                     </span>
                     <span className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Clock className="w-3.5 h-3.5" />

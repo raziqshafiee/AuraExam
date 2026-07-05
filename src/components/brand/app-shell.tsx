@@ -5,7 +5,7 @@ import { useAuthUser, signOut, type Role } from "@/lib/auth";
 import {
   Bell, LogOut, User, ChevronDown, ChevronRight, ChevronLeft, Menu,
   LayoutDashboard, BookOpen, FileText, Library, Scale,
-  Users, ScrollText, ShieldAlert,
+  Users, ScrollText, ShieldAlert, Lightbulb,
   type LucideIcon,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -25,6 +25,7 @@ const PRIMARY_NAV: Record<Role, NavItem[]> = {
     { to: "/student",         label: "Dashboard", icon: LayoutDashboard },
     { to: "/student/classes", label: "Classes",   icon: BookOpen },
     { to: "/student/exams",   label: "Exams",     icon: FileText, mobileHidden: true },
+    { to: "/study",           label: "Study",     icon: Lightbulb },
     { to: "/student/appeals", label: "Appeals",   icon: Scale, badge: "appeals" },
   ],
   lecturer: [
@@ -182,6 +183,7 @@ const SEGMENT_LABEL: Record<string, string> = {
   new: "New Exam", edit: "Edit", results: "Results",
   monitor: "Monitor", lobby: "Lobby", result: "Result",
   "submit-confirm": "Submit", take: "Taking Exam",
+  study: "Study", autopsy: "Review",
 };
 
 function findEntityName(loaderDataList: unknown[], prevSeg: string): string | null {

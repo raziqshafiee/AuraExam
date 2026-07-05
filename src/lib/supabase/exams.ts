@@ -262,6 +262,18 @@ export const getLecturerExams = createServerFn({ method: "GET" }).handler(
 
     const examIds = ((exams ?? []) as any[]).map((e: any) => e.id);
 
+    // Which exams have at least one essay question
+    const examsWithEssays = new Set<string>();
+    if (examIds.length > 0) {
+      const { data: eq } = await db(supabase)
+        .from("exam_questions")
+        .select("exam_id, questions(type)")
+        .in("exam_id", examIds);
+      for (const row of (eq ?? []) as any[]) {
+        if (row.questions?.type === "essay") examsWithEssays.add(row.exam_id);
+      }
+    }
+
     // Submission stats per exam
     type SubStat = { count: number; pctSum: number; pctCount: number; essaysPending: number };
     const subStats: Record<string, SubStat> = {};
@@ -274,7 +286,7 @@ export const getLecturerExams = createServerFn({ method: "GET" }).handler(
       for (const s of (subs ?? []) as any[]) {
         if (!subStats[s.exam_id]) subStats[s.exam_id] = { count: 0, pctSum: 0, pctCount: 0, essaysPending: 0 };
         subStats[s.exam_id].count++;
-        if (s.status === "submitted") subStats[s.exam_id].essaysPending++;
+        if (s.status === "submitted" && examsWithEssays.has(s.exam_id)) subStats[s.exam_id].essaysPending++;
         if (s.score != null && s.total > 0) {
           subStats[s.exam_id].pctSum += (s.score / s.total) * 100;
           subStats[s.exam_id].pctCount++;
@@ -1139,7 +1151,9 @@ export const getExamForTaking = createServerFn({ method: "GET" })
         const opts = (q.meta as any)?.options;
         if (q.type === "MCQ" && Array.isArray(opts)) {
           const perm = optionPermFor(sub.id, q.id, opts.length);
-          return { ...q, meta: { ...q.meta, options: perm.map((oi) => opts[oi]) } };
+          const imgs = (q.meta as any)?.option_images;
+          const shuffledImgs = Array.isArray(imgs) ? perm.map((oi) => imgs[oi] ?? null) : imgs;
+          return { ...q, meta: { ...q.meta, options: perm.map((oi) => opts[oi]), option_images: shuffledImgs } };
         }
         return q;
       });

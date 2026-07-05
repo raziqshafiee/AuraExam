@@ -136,7 +136,7 @@ function UsersPage() {
                   {u.status === "active" && u.role !== "admin" && (
                     <WakeoutButton
                       size="sm"
-                      variant="ghost"
+                      variant="destructive"
                       disabled={loading === u.id}
                       onClick={() => handleBan(u.id)}
                     >
@@ -146,7 +146,7 @@ function UsersPage() {
                   {u.status === "banned" && (
                     <WakeoutButton
                       size="sm"
-                      variant="secondary"
+                      variant="primary"
                       disabled={loading === u.id}
                       onClick={() => handleUnban(u.id)}
                     >

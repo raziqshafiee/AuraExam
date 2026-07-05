@@ -16,9 +16,9 @@ import { Route as PhilosophyRouteImport } from './routes/philosophy'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as FeaturesRouteImport } from './routes/features'
-import { Route as ContactRouteImport } from './routes/contact'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedStudyIndexRouteImport } from './routes/_authenticated/study.index'
 import { Route as AuthenticatedStudentIndexRouteImport } from './routes/_authenticated/student/index'
 import { Route as AuthenticatedLecturerIndexRouteImport } from './routes/_authenticated/lecturer/index'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin/index'
@@ -39,6 +39,7 @@ import { Route as AuthenticatedLecturerQuestionBankIndexRouteImport } from './ro
 import { Route as AuthenticatedLecturerExamsIndexRouteImport } from './routes/_authenticated/lecturer/exams.index'
 import { Route as AuthenticatedLecturerClassesIndexRouteImport } from './routes/_authenticated/lecturer/classes.index'
 import { Route as AuthenticatedLecturerAppealsIndexRouteImport } from './routes/_authenticated/lecturer/appeals.index'
+import { Route as AuthenticatedStudyAutopsyAttemptIdRouteImport } from './routes/_authenticated/study.autopsy.$attemptId'
 import { Route as AuthenticatedStudentClassesClassIdRouteImport } from './routes/_authenticated/student/classes.$classId'
 import { Route as AuthenticatedStudentAppealsScoreRouteImport } from './routes/_authenticated/student/appeals.score'
 import { Route as AuthenticatedStudentAppealsNewRouteImport } from './routes/_authenticated/student/appeals.new'
@@ -90,11 +91,6 @@ const FeaturesRoute = FeaturesRouteImport.update({
   path: '/features',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ContactRoute = ContactRouteImport.update({
-  id: '/contact',
-  path: '/contact',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
@@ -103,6 +99,11 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedStudyIndexRoute = AuthenticatedStudyIndexRouteImport.update({
+  id: '/study/',
+  path: '/study/',
+  getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedStudentIndexRoute =
   AuthenticatedStudentIndexRouteImport.update({
@@ -221,6 +222,12 @@ const AuthenticatedLecturerAppealsIndexRoute =
     path: '/lecturer/appeals/',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedStudyAutopsyAttemptIdRoute =
+  AuthenticatedStudyAutopsyAttemptIdRouteImport.update({
+    id: '/study/autopsy/$attemptId',
+    path: '/study/autopsy/$attemptId',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedStudentClassesClassIdRoute =
   AuthenticatedStudentClassesClassIdRouteImport.update({
     id: '/student/classes/$classId',
@@ -314,7 +321,6 @@ const AuthenticatedLecturerExamsExamIdEditRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/contact': typeof ContactRoute
   '/features': typeof FeaturesRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
@@ -335,6 +341,7 @@ export interface FileRoutesByFullPath {
   '/admin/': typeof AuthenticatedAdminIndexRoute
   '/lecturer/': typeof AuthenticatedLecturerIndexRoute
   '/student/': typeof AuthenticatedStudentIndexRoute
+  '/study/': typeof AuthenticatedStudyIndexRoute
   '/lecturer/classes/$classId': typeof AuthenticatedLecturerClassesClassIdRoute
   '/lecturer/exams/new': typeof AuthenticatedLecturerExamsNewRoute
   '/lecturer/question-bank/new': typeof AuthenticatedLecturerQuestionBankNewRoute
@@ -342,6 +349,7 @@ export interface FileRoutesByFullPath {
   '/student/appeals/new': typeof AuthenticatedStudentAppealsNewRoute
   '/student/appeals/score': typeof AuthenticatedStudentAppealsScoreRoute
   '/student/classes/$classId': typeof AuthenticatedStudentClassesClassIdRoute
+  '/study/autopsy/$attemptId': typeof AuthenticatedStudyAutopsyAttemptIdRoute
   '/lecturer/appeals/': typeof AuthenticatedLecturerAppealsIndexRoute
   '/lecturer/classes/': typeof AuthenticatedLecturerClassesIndexRoute
   '/lecturer/exams/': typeof AuthenticatedLecturerExamsIndexRoute
@@ -360,7 +368,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/contact': typeof ContactRoute
   '/features': typeof FeaturesRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
@@ -381,6 +388,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AuthenticatedAdminIndexRoute
   '/lecturer': typeof AuthenticatedLecturerIndexRoute
   '/student': typeof AuthenticatedStudentIndexRoute
+  '/study': typeof AuthenticatedStudyIndexRoute
   '/lecturer/classes/$classId': typeof AuthenticatedLecturerClassesClassIdRoute
   '/lecturer/exams/new': typeof AuthenticatedLecturerExamsNewRoute
   '/lecturer/question-bank/new': typeof AuthenticatedLecturerQuestionBankNewRoute
@@ -388,6 +396,7 @@ export interface FileRoutesByTo {
   '/student/appeals/new': typeof AuthenticatedStudentAppealsNewRoute
   '/student/appeals/score': typeof AuthenticatedStudentAppealsScoreRoute
   '/student/classes/$classId': typeof AuthenticatedStudentClassesClassIdRoute
+  '/study/autopsy/$attemptId': typeof AuthenticatedStudyAutopsyAttemptIdRoute
   '/lecturer/appeals': typeof AuthenticatedLecturerAppealsIndexRoute
   '/lecturer/classes': typeof AuthenticatedLecturerClassesIndexRoute
   '/lecturer/exams': typeof AuthenticatedLecturerExamsIndexRoute
@@ -408,7 +417,6 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteWithChildren
-  '/contact': typeof ContactRoute
   '/features': typeof FeaturesRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
@@ -429,6 +437,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
   '/_authenticated/lecturer/': typeof AuthenticatedLecturerIndexRoute
   '/_authenticated/student/': typeof AuthenticatedStudentIndexRoute
+  '/_authenticated/study/': typeof AuthenticatedStudyIndexRoute
   '/_authenticated/lecturer/classes/$classId': typeof AuthenticatedLecturerClassesClassIdRoute
   '/_authenticated/lecturer/exams/new': typeof AuthenticatedLecturerExamsNewRoute
   '/_authenticated/lecturer/question-bank/new': typeof AuthenticatedLecturerQuestionBankNewRoute
@@ -436,6 +445,7 @@ export interface FileRoutesById {
   '/_authenticated/student/appeals/new': typeof AuthenticatedStudentAppealsNewRoute
   '/_authenticated/student/appeals/score': typeof AuthenticatedStudentAppealsScoreRoute
   '/_authenticated/student/classes/$classId': typeof AuthenticatedStudentClassesClassIdRoute
+  '/_authenticated/study/autopsy/$attemptId': typeof AuthenticatedStudyAutopsyAttemptIdRoute
   '/_authenticated/lecturer/appeals/': typeof AuthenticatedLecturerAppealsIndexRoute
   '/_authenticated/lecturer/classes/': typeof AuthenticatedLecturerClassesIndexRoute
   '/_authenticated/lecturer/exams/': typeof AuthenticatedLecturerExamsIndexRoute
@@ -456,7 +466,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/contact'
     | '/features'
     | '/forgot-password'
     | '/login'
@@ -477,6 +486,7 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/lecturer/'
     | '/student/'
+    | '/study/'
     | '/lecturer/classes/$classId'
     | '/lecturer/exams/new'
     | '/lecturer/question-bank/new'
@@ -484,6 +494,7 @@ export interface FileRouteTypes {
     | '/student/appeals/new'
     | '/student/appeals/score'
     | '/student/classes/$classId'
+    | '/study/autopsy/$attemptId'
     | '/lecturer/appeals/'
     | '/lecturer/classes/'
     | '/lecturer/exams/'
@@ -502,7 +513,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/contact'
     | '/features'
     | '/forgot-password'
     | '/login'
@@ -523,6 +533,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/lecturer'
     | '/student'
+    | '/study'
     | '/lecturer/classes/$classId'
     | '/lecturer/exams/new'
     | '/lecturer/question-bank/new'
@@ -530,6 +541,7 @@ export interface FileRouteTypes {
     | '/student/appeals/new'
     | '/student/appeals/score'
     | '/student/classes/$classId'
+    | '/study/autopsy/$attemptId'
     | '/lecturer/appeals'
     | '/lecturer/classes'
     | '/lecturer/exams'
@@ -549,7 +561,6 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_authenticated'
-    | '/contact'
     | '/features'
     | '/forgot-password'
     | '/login'
@@ -570,6 +581,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/'
     | '/_authenticated/lecturer/'
     | '/_authenticated/student/'
+    | '/_authenticated/study/'
     | '/_authenticated/lecturer/classes/$classId'
     | '/_authenticated/lecturer/exams/new'
     | '/_authenticated/lecturer/question-bank/new'
@@ -577,6 +589,7 @@ export interface FileRouteTypes {
     | '/_authenticated/student/appeals/new'
     | '/_authenticated/student/appeals/score'
     | '/_authenticated/student/classes/$classId'
+    | '/_authenticated/study/autopsy/$attemptId'
     | '/_authenticated/lecturer/appeals/'
     | '/_authenticated/lecturer/classes/'
     | '/_authenticated/lecturer/exams/'
@@ -597,7 +610,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
-  ContactRoute: typeof ContactRoute
   FeaturesRoute: typeof FeaturesRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
@@ -658,13 +670,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FeaturesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/contact': {
-      id: '/contact'
-      path: '/contact'
-      fullPath: '/contact'
-      preLoaderRoute: typeof ContactRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/_authenticated': {
       id: '/_authenticated'
       path: ''
@@ -678,6 +683,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/study/': {
+      id: '/_authenticated/study/'
+      path: '/study'
+      fullPath: '/study/'
+      preLoaderRoute: typeof AuthenticatedStudyIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/student/': {
       id: '/_authenticated/student/'
@@ -819,6 +831,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedLecturerAppealsIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/study/autopsy/$attemptId': {
+      id: '/_authenticated/study/autopsy/$attemptId'
+      path: '/study/autopsy/$attemptId'
+      fullPath: '/study/autopsy/$attemptId'
+      preLoaderRoute: typeof AuthenticatedStudyAutopsyAttemptIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/student/classes/$classId': {
       id: '/_authenticated/student/classes/$classId'
       path: '/student/classes/$classId'
@@ -941,6 +960,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedAdminIndexRoute: typeof AuthenticatedAdminIndexRoute
   AuthenticatedLecturerIndexRoute: typeof AuthenticatedLecturerIndexRoute
   AuthenticatedStudentIndexRoute: typeof AuthenticatedStudentIndexRoute
+  AuthenticatedStudyIndexRoute: typeof AuthenticatedStudyIndexRoute
   AuthenticatedLecturerClassesClassIdRoute: typeof AuthenticatedLecturerClassesClassIdRoute
   AuthenticatedLecturerExamsNewRoute: typeof AuthenticatedLecturerExamsNewRoute
   AuthenticatedLecturerQuestionBankNewRoute: typeof AuthenticatedLecturerQuestionBankNewRoute
@@ -948,6 +968,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedStudentAppealsNewRoute: typeof AuthenticatedStudentAppealsNewRoute
   AuthenticatedStudentAppealsScoreRoute: typeof AuthenticatedStudentAppealsScoreRoute
   AuthenticatedStudentClassesClassIdRoute: typeof AuthenticatedStudentClassesClassIdRoute
+  AuthenticatedStudyAutopsyAttemptIdRoute: typeof AuthenticatedStudyAutopsyAttemptIdRoute
   AuthenticatedLecturerAppealsIndexRoute: typeof AuthenticatedLecturerAppealsIndexRoute
   AuthenticatedLecturerClassesIndexRoute: typeof AuthenticatedLecturerClassesIndexRoute
   AuthenticatedLecturerExamsIndexRoute: typeof AuthenticatedLecturerExamsIndexRoute
@@ -981,6 +1002,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAdminIndexRoute: AuthenticatedAdminIndexRoute,
   AuthenticatedLecturerIndexRoute: AuthenticatedLecturerIndexRoute,
   AuthenticatedStudentIndexRoute: AuthenticatedStudentIndexRoute,
+  AuthenticatedStudyIndexRoute: AuthenticatedStudyIndexRoute,
   AuthenticatedLecturerClassesClassIdRoute:
     AuthenticatedLecturerClassesClassIdRoute,
   AuthenticatedLecturerExamsNewRoute: AuthenticatedLecturerExamsNewRoute,
@@ -992,6 +1014,8 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedStudentAppealsScoreRoute: AuthenticatedStudentAppealsScoreRoute,
   AuthenticatedStudentClassesClassIdRoute:
     AuthenticatedStudentClassesClassIdRoute,
+  AuthenticatedStudyAutopsyAttemptIdRoute:
+    AuthenticatedStudyAutopsyAttemptIdRoute,
   AuthenticatedLecturerAppealsIndexRoute:
     AuthenticatedLecturerAppealsIndexRoute,
   AuthenticatedLecturerClassesIndexRoute:
@@ -1027,7 +1051,6 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
-  ContactRoute: ContactRoute,
   FeaturesRoute: FeaturesRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,

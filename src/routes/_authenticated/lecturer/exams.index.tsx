@@ -302,24 +302,24 @@ function LecturerExams() {
                                   </WakeoutButton>
                                 )}
                                 {canUnpublish(e.status) && (
-                                  <button
-                                    type="button"
+                                  <WakeoutButton
+                                    size="sm"
+                                    variant="outline"
                                     disabled={working === e.id}
                                     onClick={() => setPending({ type: "unpublish", id: e.id, status: e.status })}
-                                    className="text-xs font-mono text-amber-700 hover:text-amber-900 border border-amber-400 rounded-lg px-2.5 py-1 disabled:opacity-50"
                                   >
                                     {working === e.id ? "…" : "Unpublish"}
-                                  </button>
+                                  </WakeoutButton>
                                 )}
                                 {canDelete(e.status) && (
-                                  <button
-                                    type="button"
+                                  <WakeoutButton
+                                    size="sm"
+                                    variant="destructive"
                                     onClick={() => setPending({ type: "delete", id: e.id, status: e.status })}
                                     disabled={working === e.id}
-                                    className="text-xs font-mono font-bold text-white bg-red-500 border-2 border-ink rounded-full px-2.5 py-1 hover:bg-red-600 transition-colors disabled:opacity-50"
                                   >
                                     {working === e.id ? "…" : "Delete"}
-                                  </button>
+                                  </WakeoutButton>
                                 )}
                               </div>
                             </td>

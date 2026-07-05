@@ -121,7 +121,7 @@ function AdminClasses() {
                 <td className="text-right">
                   <WakeoutButton
                     size="sm"
-                    variant="ghost"
+                    variant="destructive"
                     disabled={loading === c.id}
                     onClick={() => handleDelete(c.id, c.name)}
                   >

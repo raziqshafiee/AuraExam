@@ -6,7 +6,7 @@ export const Route = createFileRoute("/features")({
   head: () => ({
     meta: [
       { title: "Features — Aura Exam" },
-      { name: "description", content: "Question banks, exam builder, FaceLandmarker proctoring, integrity flags, appeals, assignments — everything Aura Exam ships with." },
+      { name: "description", content: "Question banks, exam builder, in-browser proctoring, integrity flags, appeals, assignments, AI study review, and admin tools — everything Aura Exam ships with." },
       { property: "og:title", content: "Features — Aura Exam" },
       { property: "og:description", content: "Everything Aura Exam ships with." },
     ],
@@ -19,11 +19,11 @@ const groups = [
     title: "Question bank",
     color: "bg-lime",
     items: [
-      "MCQ, True/False, Essay question types",
-      "Rich text with LaTeX + code blocks",
-      "Reusable across any exam",
-      "Tags and point weights per question",
-      "Bulk-select when building exams",
+      "MCQ, True/False, and Essay question types",
+      "Per-question point weights",
+      "Questions are reusable across any exam",
+      "Bulk-select questions when building an exam",
+      "Owned per lecturer — isolated across accounts",
     ],
   },
   {
@@ -32,20 +32,20 @@ const groups = [
     items: [
       "Guided lifecycle: draft → upcoming → live → closed → graded",
       "Publish when ready; unpublish before any submissions exist",
-      "Only title editable after publishing",
-      "Fullscreen enforced on exam start (user-gesture scope)",
-      "Auto-submit on timeout",
+      "Schedule open and close times; exam goes live automatically",
+      "Fullscreen enforced on start; exit triggers an integrity flag",
+      "Auto-submit on timeout — no answer is ever lost",
     ],
   },
   {
     title: "Proctoring",
     color: "bg-violet text-violet-foreground",
     items: [
-      "MediaPipe FaceLandmarker — runs in-browser via WebAssembly",
-      "Gaze tracking: head-turned (|yaw| > 45°) + looking-down (pitch < −30°)",
-      "Multiple-face detection with 8-second grace period",
-      "Adaptive snapshots: 60s normal rate, 15s during alert mode",
-      "Snapshots stored per submission — no video ever recorded",
+      "MediaPipe FaceLandmarker — runs fully in-browser, no server video",
+      "Detects multiple faces with an 8-second grace period",
+      "Gaze tracking: flags head-turned (yaw > 45°) and looking-down (pitch < −30°)",
+      "Adaptive snapshots: every 60s normally, every 15s during alert mode",
+      "Snapshots scoped per submission in secure storage",
     ],
   },
   {
@@ -53,10 +53,10 @@ const groups = [
     color: "bg-sky",
     items: [
       "Hard flags: tab-switch, copy-paste, fullscreen exit, multiple faces",
-      "3 hard flags → exam auto-submitted as flagged",
+      "3 hard flags → exam auto-submitted and marked flagged",
       "Advisory flags: face missing, camera lost, gaze away, head turned",
-      "Advisory flags recorded for lecturer review — never auto-submit",
-      "60-second cooldown between repeated hard flag reports",
+      "Advisory flags are for lecturer review only — never trigger auto-submit",
+      "60-second cooldown between repeated flag reports",
     ],
   },
   {
@@ -64,10 +64,10 @@ const groups = [
     color: "bg-amber",
     items: [
       "MCQ and True/False auto-graded instantly on submit",
-      "Manual essay grading per question by the lecturer",
+      "Essay answers queued for manual lecturer grading per question",
+      "Submission promoted to graded only when all essays are scored",
       "One appeal per submission — score dispute or integrity challenge",
-      "7-day appeal window from submission date",
-      "Integrity appeal approved → retake unlocked; score appeal approved → grade updated",
+      "Integrity appeal approved → retake unlocked; score appeal → grade updated",
     ],
   },
   {
@@ -77,8 +77,51 @@ const groups = [
       "File submissions with server-enforced deadlines",
       "Resubmit any time before the deadline (replaces previous file)",
       "Locked after lecturer marks as reviewed",
-      "Grading available only after the deadline closes",
-      "Download submissions for offline review",
+      "Grading panel opens only after the deadline closes",
+      "Download any submission for offline review",
+    ],
+  },
+  {
+    title: "Classes",
+    color: "bg-lime/60",
+    items: [
+      "Lecturers create classes with a unique class code",
+      "Students enroll via class code",
+      "Exams and assignments are scoped to a class",
+      "Class roster with enrollment counts visible to admin",
+      "Admin can delete classes and view all enrollments",
+    ],
+  },
+  {
+    title: "Notifications",
+    color: "bg-pink/60",
+    items: [
+      "In-app notifications for exam results, appeal outcomes, and announcements",
+      "Unread badge in the nav bar — polled every 30 seconds",
+      "Mark all as read in one click",
+      "Notifications scoped by role — students, lecturers, and admins each see their own",
+    ],
+  },
+  {
+    title: "Study — Why Was I Wrong?",
+    color: "bg-violet/60",
+    items: [
+      "Students review every wrong MCQ and True/False answer after grading",
+      "AI-generated explanation per wrong answer, cached after first load",
+      "Weak-topic summary groups mistakes by concept",
+      "Generate explanations one-by-one or all at once",
+      "Read-only — never touches the original submission",
+    ],
+  },
+  {
+    title: "Admin tools",
+    color: "bg-sky/60",
+    items: [
+      "Manage all users: view, ban, and unban accounts",
+      "Role-based access: student, lecturer, admin",
+      "Full audit log with categories: user management, exam, integrity, appeal, class",
+      "Overview of all classes and exams platform-wide",
+      "Admin bypasses RLS via service role — no data is hidden",
     ],
   },
 ];

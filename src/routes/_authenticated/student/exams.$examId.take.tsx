@@ -77,11 +77,18 @@ function TakeExam() {
   });
   const [integrityFlags, setIntegrityFlags] = useState(0);
   const [lastFlagType, setLastFlagType] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(() => !!document.fullscreenElement);
   // Review/submit happens in an in-page overlay (not a separate route) so
   // fullscreen + integrity listeners stay mounted the whole time.
   const [showReview, setShowReview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [navigating, setNavigating] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
 
   // Mirror of `answers` for async handlers (autosave, timer submit) that must
   // read the current value without being re-registered on every keystroke.
@@ -171,6 +178,7 @@ function TakeExam() {
         sessionStorage.removeItem(`${storageKeyRef.current}-flagged`);
         sessionStorage.removeItem(`${storageKeyRef.current}-idx`);
       } catch {}
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
       navigateRef.current({
         to: "/student/exams/$examId/result",
         params: { examId: examIdRef.current },
@@ -229,6 +237,7 @@ function TakeExam() {
             sessionStorage.removeItem(`${storageKeyRef.current}-flagged`);
             sessionStorage.removeItem(`${storageKeyRef.current}-idx`);
           } catch {}
+          if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
           navigateRef.current({
             to: "/student/exams/$examId/result",
             params: { examId: examIdRef.current },
@@ -240,11 +249,6 @@ function TakeExam() {
 
     // Wire sendFlag into the ref so CameraProctor's onHardFlag can call it.
     sendFlagRef.current = sendFlag;
-
-    // Re-request fullscreen if the lobby's fullscreen didn't survive navigation.
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-    }
 
     // Grace period on mount: some browsers fire a delayed fullscreenchange exit
     // event during same-origin navigation (lobby → take). If the page is already
@@ -436,6 +440,39 @@ function TakeExam() {
     }
   }
 
+  // Fullscreen gate — shown if the browser dropped fullscreen during navigation
+  // from the lobby. The button provides a user gesture so requestFullscreen works.
+  const [fullscreenSkipped, setFullscreenSkipped] = useState(false);
+  if (!isFullscreen && !fullscreenSkipped) {
+    return (
+      <div className="fixed inset-0 z-[70] bg-ink flex flex-col items-center justify-center gap-6 text-background p-8">
+        <div className="text-center max-w-sm">
+          <div className="text-5xl mb-4">🖥️</div>
+          <h2 className="font-display font-black text-2xl mb-2">Fullscreen required</h2>
+          <p className="text-sm text-background/70 mb-6">
+            This exam must be taken in fullscreen mode. Click below to enter fullscreen and begin.
+          </p>
+          <button
+            className="w-full py-3 rounded-2xl border-2 border-lime bg-lime text-ink font-display font-bold text-lg shadow-[4px_4px_0_rgba(255,255,255,0.2)] hover:brightness-95 transition-all"
+            onClick={() => {
+              document.documentElement.requestFullscreen().catch(() => {
+                setFullscreenSkipped(true);
+              });
+            }}
+          >
+            Enter fullscreen &amp; begin exam
+          </button>
+          <button
+            className="mt-3 text-xs text-background/40 hover:text-background/60 transition-colors underline"
+            onClick={() => setFullscreenSkipped(true)}
+          >
+            My browser doesn't support fullscreen — continue anyway
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!q) {
     return (
       <div className="p-8 text-center text-ink/50">
@@ -476,9 +513,18 @@ function TakeExam() {
           </span>
         )}
         <span className="ml-auto flex items-center gap-4">
-          <span className="flex items-center gap-1 opacity-60">
-            <Maximize className="w-3.5 h-3.5" /> fullscreen
-          </span>
+          {isFullscreen ? (
+            <span className="flex items-center gap-1 opacity-60">
+              <Maximize className="w-3.5 h-3.5" /> fullscreen
+            </span>
+          ) : (
+            <button
+              onClick={() => document.documentElement.requestFullscreen().catch(() => {})}
+              className="flex items-center gap-1 text-amber font-semibold hover:text-amber/80 transition-colors"
+            >
+              <Maximize className="w-3.5 h-3.5" /> click to re-enter fullscreen
+            </button>
+          )}
           {exam.require_camera ? (
             <><Camera className="w-3.5 h-3.5 text-lime" /> proctoring on</>
           ) : (

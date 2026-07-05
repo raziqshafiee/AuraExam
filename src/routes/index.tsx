@@ -290,9 +290,6 @@ function Index() {
             <WakeoutButton asChild size="lg">
               <Link to="/register">Create my account</Link>
             </WakeoutButton>
-            <WakeoutButton asChild size="lg" variant="secondary">
-              <Link to="/contact">Talk to us</Link>
-            </WakeoutButton>
           </div>
         </div>
       </section>

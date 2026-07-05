@@ -3,6 +3,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Card, PageHeader, Empty } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
+import { ConfirmModal } from "@/components/brand/confirm-modal";
 import { getQuestions, deleteQuestion, type Question } from "@/lib/supabase/questions";
 
 export const Route = createFileRoute("/_authenticated/lecturer/question-bank/")({
@@ -18,6 +19,7 @@ function QuestionBank() {
   const [typeFilter, setTypeFilter] = useState<"all" | "MCQ" | "TF" | "ESSAY">("all");
   const [classFilter, setClassFilter] = useState<string>("all");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Question | null>(null);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 10;
 
@@ -38,12 +40,14 @@ function QuestionBank() {
   const safePage = Math.min(page, totalPages);
   const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  async function handleDelete(id: string) {
-    setDeleting(id);
+  async function handleDelete() {
+    if (!pendingDelete) return;
+    setDeleting(pendingDelete.id);
     try {
-      await deleteQuestion({ data: id });
-      setQuestions((prev) => prev.filter((q) => q.id !== id));
+      await deleteQuestion({ data: pendingDelete.id });
+      setQuestions((prev) => prev.filter((q) => q.id !== pendingDelete.id));
       toast.success("Question deleted");
+      setPendingDelete(null);
     } catch (err: any) {
       toast.error(err.message || "Failed to delete");
     } finally {
@@ -152,7 +156,7 @@ function QuestionBank() {
                     size="sm"
                     variant="destructive"
                     disabled={deleting === q.id}
-                    onClick={() => handleDelete(q.id)}
+                    onClick={() => setPendingDelete(q)}
                   >
                     {deleting === q.id ? "…" : "Delete"}
                   </WakeoutButton>
@@ -200,6 +204,17 @@ function QuestionBank() {
           )}
         </>
       )}
+
+      <ConfirmModal
+        open={pendingDelete !== null}
+        title="Delete question?"
+        message="This cannot be undone. The question will be permanently removed from your bank and any exams that use it."
+        confirmLabel="Delete"
+        danger
+        loading={deleting !== null}
+        onConfirm={handleDelete}
+        onClose={() => { if (!deleting) setPendingDelete(null); }}
+      />
     </>
   );
 }

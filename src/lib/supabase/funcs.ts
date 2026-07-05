@@ -171,10 +171,10 @@ export const getLecturerDashboardData = createServerFn({ method: "GET" })
         ? db(supabase).from("essay_answers").select("*", { count: "exact", head: true }).in("submission_id", submittedSubIds).is("score", null)
         : Promise.resolve({ count: 0 }),
       examIds.length > 0
-        ? db(supabase).from("submissions").select("id, flags, submitted_at, profiles!student_id(name), exams(title, classes(code))").eq("status", "flagged").in("exam_id", examIds).order("submitted_at", { ascending: false }).limit(5)
+        ? db(supabase).from("submissions").select("id, exam_id, flags, submitted_at, profiles!student_id(name), exams(title, classes(code))").eq("status", "flagged").in("exam_id", examIds).order("submitted_at", { ascending: false }).limit(5)
         : Promise.resolve({ data: [] }),
       liveExamIds.length > 0
-        ? db(supabase).from("submissions").select("exam_id").in("exam_id", liveExamIds).eq("status", "in-progress")
+        ? db(supabase).from("submissions").select("exam_id, status").in("exam_id", liveExamIds)
         : Promise.resolve({ data: [] }),
       assignmentIds.length > 0
         ? db(supabase).from("assignment_submissions").select("assignment_id").in("assignment_id", assignmentIds)
@@ -184,8 +184,13 @@ export const getLecturerDashboardData = createServerFn({ method: "GET" })
     const pendingEssaysCount = (pendingEssayResult as any).count ?? 0;
 
     const inProgressByExam: Record<string, number> = {};
+    const submittedByExam: Record<string, number> = {};
     for (const s of (inProgressResult.data as any[]) ?? []) {
-      inProgressByExam[s.exam_id] = (inProgressByExam[s.exam_id] ?? 0) + 1;
+      if (s.status === "in-progress") {
+        inProgressByExam[s.exam_id] = (inProgressByExam[s.exam_id] ?? 0) + 1;
+      } else {
+        submittedByExam[s.exam_id] = (submittedByExam[s.exam_id] ?? 0) + 1;
+      }
     }
     const liveSubmissionsCount = Object.values(inProgressByExam).reduce((a, b) => a + b, 0);
 
@@ -198,6 +203,7 @@ export const getLecturerDashboardData = createServerFn({ method: "GET" })
         class_id: e.class_id as string,
         end_time: e.end_time as string,
         inProgressCount: inProgressByExam[e.id] ?? 0,
+        submittedCount: submittedByExam[e.id] ?? 0,
         enrolledCount: enrolledByClass[e.class_id] ?? 0,
       }));
 

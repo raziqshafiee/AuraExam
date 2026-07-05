@@ -5,7 +5,6 @@ import { WakeoutButton } from "./wakeout-button";
 const links = [
   { to: "/features", label: "Features" },
   { to: "/philosophy", label: "Philosophy" },
-  { to: "/contact", label: "Contact" },
 ] as const;
 
 export function MarketingNav() {
