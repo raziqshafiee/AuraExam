@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, PageHeader } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { getProfile, updateProfileName } from "@/lib/supabase/profile";
-import { supabaseClient } from "@/lib/auth-client";
+import { getSupabaseClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import { Eye, EyeOff } from "lucide-react";
 
@@ -65,7 +65,7 @@ export function ProfilePage() {
       }
 
       if (emailChanged) {
-        const { error } = await supabaseClient.auth.updateUser({ email: email.trim() });
+        const { error } = await getSupabaseClient().auth.updateUser({ email: email.trim() });
         if (error) throw new Error(error.message);
         toast.success("Confirmation sent to new email — check your inbox");
         return;
@@ -88,13 +88,13 @@ export function ProfilePage() {
     setSavingPw(true);
     try {
       // Re-authenticate to verify current password
-      const { error: signInErr } = await supabaseClient.auth.signInWithPassword({
+      const { error: signInErr } = await getSupabaseClient().auth.signInWithPassword({
         email: profile?.email ?? "",
         password: currentPassword,
       });
       if (signInErr) throw new Error("Current password is incorrect");
 
-      const { error } = await supabaseClient.auth.updateUser({ password: newPassword });
+      const { error } = await getSupabaseClient().auth.updateUser({ password: newPassword });
       if (error) throw new Error(error.message);
 
       toast.success("Password updated");

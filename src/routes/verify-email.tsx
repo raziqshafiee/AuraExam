@@ -3,7 +3,7 @@ import { useState } from "react";
 import { MarketingLayout } from "@/components/brand/marketing-layout";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { Star } from "@/components/brand/doodles";
-import { supabaseClient } from "@/lib/auth-client";
+import { getSupabaseClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/verify-email")({
@@ -25,7 +25,7 @@ function VerifyEmailPage() {
     }
     setIsSending(true);
     try {
-      const { error } = await supabaseClient.auth.resend({
+      const { error } = await getSupabaseClient().auth.resend({
         type: "signup",
         email,
         options: { emailRedirectTo: `${window.location.origin}/login` },

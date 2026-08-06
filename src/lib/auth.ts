@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { createServerFn } from "@tanstack/react-start";
-import { supabaseClient } from "./auth-client";
+import { getSupabaseClient } from "./auth-client";
 import type { User } from "@supabase/supabase-js";
 
 export type Role = "student" | "lecturer" | "admin";
@@ -39,7 +39,7 @@ export async function getAuthUser(): Promise<AuthUser | null> {
   if (typeof window === "undefined") {
     return _getServerAuthUser();
   }
-  const { data: { user } } = await supabaseClient.auth.getUser();
+  const { data: { user } } = await getSupabaseClient().auth.getUser();
   if (!user) return null;
   return mapUser(user);
 }
@@ -49,12 +49,12 @@ export function useAuthUser() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabaseClient.auth.getUser().then(({ data: { user: u } }) => {
+    getSupabaseClient().auth.getUser().then(({ data: { user: u } }) => {
       setUser(u ? mapUser(u) : null);
       setLoading(false);
     });
 
-    const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_, session) => {
+    const { data: { subscription } } = getSupabaseClient().auth.onAuthStateChange((_, session) => {
       setUser(session?.user ? mapUser(session.user) : null);
       setLoading(false);
     });
@@ -66,7 +66,7 @@ export function useAuthUser() {
 }
 
 export async function signIn(email: string, password: string): Promise<AuthUser> {
-  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  const { data, error } = await getSupabaseClient().auth.signInWithPassword({ email, password });
 
   if (error) {
     console.error("Sign in error:", error);
@@ -77,14 +77,14 @@ export async function signIn(email: string, password: string): Promise<AuthUser>
   // Check ban status before the session is considered valid. If banned, revoke
   // the session immediately and surface a clear error — avoids the confusing
   // "Welcome back!" toast followed by a silent redirect back to /login.
-  const { data: profile } = await supabaseClient
+  const { data: profile } = await getSupabaseClient()
     .from("profiles")
     .select("status")
     .eq("id", data.user.id)
     .maybeSingle();
 
   if (profile?.status === "banned") {
-    await supabaseClient.auth.signOut();
+    await getSupabaseClient().auth.signOut();
     throw new Error("Your account has been suspended. Please contact your institution.");
   }
 
@@ -113,12 +113,12 @@ export async function signUp(
   const { role: confirmedRole } = await registerUser({ data: { email, password, name, role } });
 
   // Establish a client session immediately after creation.
-  const { error: signInError } = await supabaseClient.auth.signInWithPassword({ email, password });
+  const { error: signInError } = await getSupabaseClient().auth.signInWithPassword({ email, password });
   if (signInError) throw new Error(signInError.message);
 
   return { needsVerification: false, role: confirmedRole };
 }
 
 export async function signOut(): Promise<void> {
-  await supabaseClient.auth.signOut();
+  await getSupabaseClient().auth.signOut();
 }
