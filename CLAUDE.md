@@ -39,24 +39,6 @@ npm run clear:appeals
 
 No test suite exists in this project.
 
-## Pending schema changes (run in Supabase SQL Editor)
-
-```sql
--- 1. Add category column to audit_log (required for audit logging to work)
-ALTER TABLE audit_log
-  ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'general'
-  CHECK (category IN ('user_management','exam','integrity','appeal','class','general'));
-
--- 2. Allow admin to read class_enrollments (fixes zero student count on admin/classes)
-DROP POLICY IF EXISTS "enrollments: read" ON class_enrollments;
-CREATE POLICY "enrollments: read" ON class_enrollments FOR SELECT
-  USING (
-    auth.uid() = student_id
-    OR EXISTS (SELECT 1 FROM classes WHERE id = class_id AND lecturer_id = auth.uid())
-    OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
-  );
-```
-
 ## Architecture
 
 ### Stack

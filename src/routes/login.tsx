@@ -1,8 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MarketingLayout } from "@/components/brand/marketing-layout";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
-import { signIn, ROLE_HOME, type Role } from "@/lib/auth";
+import { signIn, useAuthUser, ROLE_HOME, type Role } from "@/lib/auth";
+import { sendEmailConfirmedNotice } from "@/lib/supabase/mailer";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
@@ -17,9 +18,19 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
   const navigate = useNavigate();
+  const { user } = useAuthUser();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  // Lands here after an email-confirmation link redirect — Supabase already
+  // established a session client-side, so skip the form and go straight in.
+  useEffect(() => {
+    if (user) {
+      sendEmailConfirmedNotice().catch(() => {});
+      navigate({ to: ROLE_HOME[user.role] });
+    }
+  }, [user, navigate]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,6 +40,11 @@ function LoginPage() {
       toast.success(`Welcome back, ${user.name}!`);
       navigate({ to: ROLE_HOME[user.role] });
     } catch (error: any) {
+      if (error.name === "EmailNotConfirmedError") {
+        toast.error("Please confirm your email before logging in.");
+        navigate({ to: "/verify-email", search: { email } });
+        return;
+      }
       toast.error(error.message || "Failed to sign in");
     } finally {
       setIsLoading(false);

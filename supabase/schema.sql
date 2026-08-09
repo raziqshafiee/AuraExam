@@ -14,18 +14,18 @@ create table if not exists profiles (
   created_at  timestamptz not null default now()
 );
 
-create or replace function handle_new_user()
-returns trigger language plpgsql security definer as $$
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  insert into profiles (id, name, role, status)
+  -- Self-registration may only produce 'student' or 'lecturer'. 'admin' (and any
+  -- other value) is never trusted from client-supplied raw_user_meta_data —
+  -- admin accounts are granted exclusively via the seed:admin script.
+  insert into public.profiles (id, name, role, status)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'name', split_part(new.email,'@',1)),
-    coalesce(new.raw_user_meta_data->>'role', 'student'),
-    case coalesce(new.raw_user_meta_data->>'role','student')
-      when 'lecturer' then 'pending'
-      else 'active'
-    end
+    case when new.raw_user_meta_data->>'role' = 'lecturer' then 'lecturer' else 'student' end,
+    case when new.raw_user_meta_data->>'role' = 'lecturer' then 'pending' else 'active' end
   )
   on conflict (id) do nothing;
   return new;
@@ -35,7 +35,10 @@ $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
-  for each row execute function handle_new_user();
+  for each row execute function public.handle_new_user();
+
+-- GoTrue's role needs EXECUTE on the trigger function to complete the auth.users insert.
+grant execute on function public.handle_new_user() to supabase_auth_admin;
 
 -- ── Classes ──────────────────────────────────────────────────
 create table if not exists classes (

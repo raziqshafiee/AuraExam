@@ -71,31 +71,6 @@ export const getAdminIntegrityLog = createServerFn({ method: "GET" })
     };
   });
 
-// Creates a user via the admin API (no confirmation email, no rate limit).
-// Auto-confirms the email so the user can sign in immediately.
-export const registerUser = createServerFn({ method: "POST" })
-  .inputValidator((data: { email: string; password: string; name: string; role: string }) => data)
-  .handler(async ({ data }) => {
-    const safeRole = data.role === "lecturer" ? "lecturer" : "student";
-    const admin = createAdminClient();
-
-    const { data: authData, error: authError } = await admin.auth.admin.createUser({
-      email: data.email,
-      password: data.password,
-      user_metadata: { name: data.name, role: safeRole },
-      email_confirm: true,
-    });
-    if (authError) throw new Error(authError.message);
-
-    const { error: profileError } = await admin.from("profiles").upsert(
-      { id: authData.user.id, name: data.name, role: safeRole, status: "active" },
-      { onConflict: "id", ignoreDuplicates: true }
-    );
-    if (profileError) throw new Error(profileError.message);
-
-    return { role: safeRole as "student" | "lecturer" };
-  });
-
 // Server function so process.env.SUPABASE_SERVICE_ROLE_KEY is always available.
 // Restricts role to student/lecturer; admin can only be granted via seed scripts.
 export const createUserProfile = createServerFn({ method: "POST" })

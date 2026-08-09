@@ -1,0 +1,75 @@
+<!--
+  Aura Exam — "Confirm signup" email template.
+  Paste this into: Supabase Dashboard → Authentication → Emails → Templates → Confirm signup → Source.
+  Table-based / inline-style only — email clients don't support external stylesheets, flexbox, or grid.
+-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fcfbf6; padding:32px 16px; font-family:'Bricolage Grotesque', Arial, sans-serif;">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%; background-color:#ffffff; border:2px solid #111111; border-radius:24px; box-shadow:6px 6px 0 #111111;">
+        <tr>
+          <td align="center" style="padding:40px 32px 8px 32px;">
+            <table role="presentation" cellpadding="0" cellspacing="0">
+              <tr>
+                <td valign="middle" style="padding-right:10px;">
+                  <img src="https://hssgafvhephfkmdwdvjq.supabase.co/storage/v1/object/public/email-assets/logo.svg" width="48" height="48" alt="" style="display:block; border:0; border-radius:50%; border:2px solid #111111;" />
+                </td>
+                <td valign="middle">
+                  <span style="font-family:'Bricolage Grotesque', Arial, sans-serif; font-size:28px; font-weight:800; color:#111111; letter-spacing:-0.02em;">Aura</span><span style="font-family:'Bricolage Grotesque', Arial, sans-serif; font-size:28px; font-weight:800; color:#ff65a5; letter-spacing:-0.02em;">.</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:16px 32px 0 32px;">
+            <h1 style="margin:0; font-family:'Bricolage Grotesque', Arial, sans-serif; font-size:28px; font-weight:800; color:#111111; letter-spacing:-0.02em;">
+              Confirm your Aura Exam account
+            </h1>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:12px 32px 0 32px;">
+            <p style="margin:0; font-family:Arial, sans-serif; font-size:15px; line-height:1.6; color:#4b4b4b;">
+              Click the button below to verify <strong>{{ .Email }}</strong> and activate your account.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:28px 32px 8px 32px;">
+            <table role="presentation" cellpadding="0" cellspacing="0">
+              <tr>
+                <td align="center" bgcolor="#c4f542" style="border:2px solid #111111; border-radius:999px; box-shadow:4px 4px 0 #111111;">
+                  <a href="{{ .ConfirmationURL }}" target="_blank" style="display:inline-block; padding:14px 32px; font-family:'Bricolage Grotesque', Arial, sans-serif; font-size:15px; font-weight:800; color:#111111; text-decoration:none; letter-spacing:0.01em;">
+                    Confirm account
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:20px 32px 0 32px;">
+            <p style="margin:0; font-family:Arial, sans-serif; font-size:12px; line-height:1.6; color:#8a8a8a;">
+              Button not working? Copy and paste this link into your browser:<br />
+              <a href="{{ .ConfirmationURL }}" style="color:#4b4b4b; word-break:break-all;">{{ .ConfirmationURL }}</a>
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px 32px 0 32px;">
+            <hr style="border:none; border-top:2px solid #111111; margin:0;" />
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:16px 32px 32px 32px;">
+            <p style="margin:0; font-family:Arial, sans-serif; font-size:12px; line-height:1.6; color:#8a8a8a;">
+              Aura Exam — UTeM FICT<br />
+              This is an automated email — please don't reply directly to it.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>

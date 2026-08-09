@@ -70,6 +70,11 @@ export async function signIn(email: string, password: string): Promise<AuthUser>
 
   if (error) {
     console.error("Sign in error:", error);
+    if (error.code === "email_not_confirmed" || /email.*not.*confirmed/i.test(error.message || "")) {
+      const notConfirmed = new Error("Please confirm your email before logging in.");
+      notConfirmed.name = "EmailNotConfirmedError";
+      throw notConfirmed;
+    }
     throw new Error(error.message || "Failed to sign in");
   }
   if (!data?.user) throw new Error("Sign in failed");
@@ -108,15 +113,25 @@ export async function signUp(
   name: string,
   role: Role,
 ): Promise<{ needsVerification: boolean; role: Role }> {
-  // Use admin API server-side: auto-confirms email, sends no email, no rate limit.
-  const { registerUser } = await import("./supabase/admin");
-  const { role: confirmedRole } = await registerUser({ data: { email, password, name, role } });
+  // Plain client signUp so Supabase sends a real confirmation email (per the
+  // project's "Confirm email" auth setting). The `handle_new_user` DB trigger
+  // creates the profiles row on auth.users insert, before confirmation.
+  const { data, error } = await getSupabaseClient().auth.signUp({
+    email,
+    password,
+    options: {
+      data: { name, role },
+      emailRedirectTo: `${window.location.origin}/login`,
+    },
+  });
+  if (error) throw new Error(error.message);
+  // Note: this project's Auth API returns a flat user object (no `session`)
+  // when email confirmation is pending, which @supabase/auth-js's
+  // `_sessionResponse` xform doesn't recognize — it only reads `data.user`,
+  // so `data.user`/`data.session` end up null even on a successful signup.
+  // Absence of `error` is the reliable success signal here.
 
-  // Establish a client session immediately after creation.
-  const { error: signInError } = await getSupabaseClient().auth.signInWithPassword({ email, password });
-  if (signInError) throw new Error(signInError.message);
-
-  return { needsVerification: false, role: confirmedRole };
+  return { needsVerification: !data.session, role };
 }
 
 export async function signOut(): Promise<void> {
