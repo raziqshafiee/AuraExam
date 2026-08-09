@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { MarketingLayout } from "@/components/brand/marketing-layout";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { signIn, useAuthUser, ROLE_HOME, type Role } from "@/lib/auth";
-import { sendEmailConfirmedNotice } from "@/lib/supabase/mailer";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
@@ -23,11 +22,11 @@ function LoginPage() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  // Lands here after an email-confirmation link redirect — Supabase already
-  // established a session client-side, so skip the form and go straight in.
+  // If a session already exists (e.g. user navigated back here while signed
+  // in), skip the form and go straight in. Email-confirmation links land on
+  // /auth/confirm, not here — that route handles the confirmed-email notice.
   useEffect(() => {
     if (user) {
-      sendEmailConfirmedNotice().catch(() => {});
       navigate({ to: ROLE_HOME[user.role] });
     }
   }, [user, navigate]);
