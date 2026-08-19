@@ -39,6 +39,10 @@ interface Props {
    *  parent is responsible for calling recordFlag so auto-submit logic lives
    *  in one place. Only fires in monitor mode with a submissionId. */
   onHardFlag?: (type: string, label: string) => void;
+  /** Fires when a resolved event means "a single, present face just returned"
+   *  — the physical moment a proxy swap could have occurred. Task 6 wires this
+   *  to trigger a re-verification. Optional; no-op if omitted. */
+  onIdentityTrigger?: (reason: "face-restored" | "camera-restored" | "single-face-restored") => void;
 }
 
 // Module-level promise so preload is shared across instances and only fires once
@@ -62,7 +66,7 @@ function extractHeadAngles(matrixData: Float32Array): { yawDeg: number; pitchDeg
   return { yawDeg, pitchDeg };
 }
 
-export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props) {
+export function CameraProctor({ mode, onReady, submissionId, onHardFlag, onIdentityTrigger }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<any>(null);
@@ -71,6 +75,14 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
   const mountedRef = useRef(true);
   const onHardFlagRef = useRef(onHardFlag);
   onHardFlagRef.current = onHardFlag;
+  // Not called yet — Task 6 wires this once face-verify exists. Kept as a ref
+  // so it's already threaded through without requiring another prop-drilling pass.
+  const onIdentityTriggerRef = useRef(onIdentityTrigger);
+  onIdentityTriggerRef.current = onIdentityTrigger;
+  // Latest facial blendshapes (categoryName -> score), refreshed each detection
+  // tick alongside the transformation matrix. Task 6's liveness-challenge flow
+  // reads this via a forwarded ref/callback; not consumed within this file yet.
+  const blendshapesRef = useRef<Record<string, number> | null>(null);
 
   const proctorRef = useRef({
     missingSince: 0,
@@ -229,7 +241,7 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
         },
         runningMode: "VIDEO",
         numFaces: 2,
-        outputFaceBlendshapes: false,
+        outputFaceBlendshapes: true,
         outputFacialTransformationMatrixes: true,
       });
       // P-1: component may have unmounted during the ~26MB model download
@@ -247,6 +259,11 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag }: Props
           const count: number = result.faceLandmarks.length;
           const matrix: Float32Array | null =
             result.facialTransformationMatrixes?.[0]?.data ?? null;
+          const categories: Array<{ categoryName: string; score: number }> | undefined =
+            result.faceBlendshapes?.[0]?.categories;
+          blendshapesRef.current = categories
+            ? Object.fromEntries(categories.map((c) => [c.categoryName, c.score]))
+            : null;
           setFace(count > 0 ? "ok" : "missing");
           if (reportingEnabled) handleProctorTick(count, matrix);
         } catch {
