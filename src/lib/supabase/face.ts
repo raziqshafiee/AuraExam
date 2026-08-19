@@ -352,6 +352,16 @@ export const getFaceEvidenceUrl = createServerFn({ method: "GET" })
 //    on created_at + retention window, since the DB column may already be
 //    null by the time this runs).
 export const facePurge = createServerFn({ method: "POST" }).handler(async () => {
+  // The brief's given code has no auth check at all, which would leave this
+  // reachable by anyone unauthenticated. Mirroring syncExamStatuses's
+  // established precedent (exams.ts) — any authenticated user may trigger
+  // this idempotent maintenance sweep (it only ever deletes evidence already
+  // past the retention window; no sensitive data is returned) — rather than
+  // leaving the endpoint fully open.
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
   const admin = createAdminClient();
   const settings = await getFaceSettings();
   const cutoff = new Date(Date.now() - settings.evidenceRetentionDays * 86_400_000).toISOString();
