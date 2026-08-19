@@ -353,14 +353,17 @@ export const getFaceEvidenceUrl = createServerFn({ method: "GET" })
 //    null by the time this runs).
 export const facePurge = createServerFn({ method: "POST" }).handler(async () => {
   // The brief's given code has no auth check at all, which would leave this
-  // reachable by anyone unauthenticated. Mirroring syncExamStatuses's
-  // established precedent (exams.ts) — any authenticated user may trigger
-  // this idempotent maintenance sweep (it only ever deletes evidence already
-  // past the retention window; no sensitive data is returned) — rather than
-  // leaving the endpoint fully open.
+  // reachable by anyone unauthenticated. Admin-only (same pattern as
+  // getFaceReviewQueue/faceReview above), not merely any-authenticated-user
+  // like syncExamStatuses — that precedent doesn't transfer here because
+  // syncExamStatuses is a non-destructive status recompute, while this
+  // function permanently deletes evidence photos from storage. Defense in
+  // depth for a privileged, irreversible operation.
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
+  const { data: profile } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+  if (profile?.role !== "admin") throw new Error("Forbidden");
 
   const admin = createAdminClient();
   const settings = await getFaceSettings();
