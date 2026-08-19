@@ -1,6 +1,9 @@
 // src/lib/supabase/settings.ts
 import { createServerFn } from "@tanstack/react-start";
+import { createClient } from "./server";
 import { createAdminClient } from "./admin-client";
+
+const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
 export type FaceSettings = {
   autoApproveThreshold: number;
@@ -52,5 +55,19 @@ export async function getFaceSettings(): Promise<FaceSettings> {
 // involved — but still gated to admin so students can't learn the exact
 // threshold and try to game it).
 export const getAdminFaceSettings = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { data: profile } = await db(supabase)
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  if (profile?.role !== "admin") throw new Error("Forbidden");
+
   return getFaceSettings();
 });
