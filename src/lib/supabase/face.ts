@@ -396,6 +396,125 @@ export const facePurge = createServerFn({ method: "POST" }).handler(async () => 
   return { purged: enrollmentPaths.length + verificationPaths.length };
 });
 
+type VerifyInput = {
+  context: "lobby" | "in_exam" | "submit";
+  examId: string;
+  submissionId?: string;
+  embeddings: number[][];
+  antispoofScore: number;
+  livenessScore: number;
+  evidenceJpegBase64?: string;
+};
+
+export const faceVerify = createServerFn({ method: "POST" })
+  .inputValidator((data: VerifyInput) => data)
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const settings = await getFaceSettings();
+    const admin = createAdminClient();
+
+    const { data: enrollment } = await (admin as any)
+      .from("face_enrollments")
+      .select("id, embedding_reference, embedding_samples")
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (!enrollment) {
+      return { passed: false, similarity: 0, attemptsRemaining: 0, elevated: true, guidance: "No active enrollment — verify your identity from your dashboard first." };
+    }
+
+    const refs = [parseVector(enrollment.embedding_reference), ...(enrollment.embedding_samples ?? []).map(parseVector)];
+    const similarities = data.embeddings.map((e) => bestMatch(e, refs));
+    const similarity = Math.max(...similarities);
+    const threshold = settings.liveThreshold;
+    const passed = similarity >= threshold;
+
+    // Count prior attempts for this context+exam today, for the
+    // "3 tries then fail-soft" rule (lobby only — in_exam/submit are single-shot).
+    let attemptsRemaining = 2;
+    if (data.context === "lobby") {
+      const { count } = await (admin as any)
+        .from("face_verifications")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", user.id)
+        .eq("exam_id", data.examId)
+        .eq("context", "lobby");
+      attemptsRemaining = Math.max(0, settings.maxAttempts - 1 - (count ?? 0));
+    }
+
+    let evidencePath: string | null = null;
+    if (!passed && data.evidenceJpegBase64) {
+      evidencePath = `${user.id}/${data.context}/${Date.now()}.jpg`;
+      const bytes = Uint8Array.from(atob(data.evidenceJpegBase64), (c) => c.charCodeAt(0));
+      await (admin as any).storage.from("identity-evidence").upload(evidencePath, bytes, { contentType: "image/jpeg" });
+    }
+
+    await (admin as any).from("face_verifications").insert({
+      user_id: user.id,
+      exam_id: data.examId,
+      submission_id: data.submissionId ?? null,
+      enrollment_id: enrollment.id,
+      context: data.context,
+      similarity,
+      threshold_used: threshold,
+      passed,
+      model_version: MODEL_VERSION,
+      evidence_path: evidencePath,
+    });
+
+    const elevated = !passed;
+    if (!passed && (data.context !== "lobby" || attemptsRemaining === 0)) {
+      const { data: examRow } = await (admin as any).from("exams").select("title, classes(lecturer_id)").eq("id", data.examId).single();
+      await pushNotification(supabase, {
+        userId: user.id, type: "identity_unverified", title: "Identity could not be confirmed",
+        body: `We couldn't confirm your identity for "${examRow?.title}". You may still continue — your lecturer has been notified.`,
+      });
+      if (examRow?.classes?.lecturer_id) {
+        await pushNotification(supabase, {
+          userId: examRow.classes.lecturer_id, type: "identity_unverified", title: "Student identity unverified",
+          body: `A student's identity could not be confirmed for "${examRow.title}".`, link: `/lecturer/exams/${data.examId}/monitor`,
+        }).catch(() => {});
+      }
+    }
+
+    return {
+      passed, similarity: Math.round(similarity * 1000) / 1000, attemptsRemaining, elevated,
+      guidance: passed ? undefined : "Try more light, remove your cap/sunglasses, and face the camera directly.",
+    };
+  });
+
+// POST: stamp submission_id onto the lobby verification row right after
+// startExam creates the submission (the lobby check runs BEFORE a submission
+// exists, so it can't be tagged at capture time).
+export const faceBindSession = createServerFn({ method: "POST" })
+  .inputValidator((data: { submissionId: string; examId: string }) => data)
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const admin = createAdminClient();
+    const { data: lobbyRow } = await (admin as any)
+      .from("face_verifications")
+      .select("id, passed")
+      .eq("user_id", user.id)
+      .eq("exam_id", data.examId)
+      .eq("context", "lobby")
+      .is("submission_id", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lobbyRow) {
+      await (admin as any).from("face_verifications").update({ submission_id: data.submissionId }).eq("id", lobbyRow.id);
+    }
+    return { elevated: lobbyRow ? !lobbyRow.passed : false };
+  });
+
 async function recordAttempt(
   admin: any,
   userId: string,

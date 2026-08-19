@@ -210,6 +210,7 @@ export type ExamListItem = {
 
 export type ExamDetail = ExamListItem & {
   shuffle: boolean;
+  require_identity_verification: boolean;
   questions: Array<{
     id: string;
     type: "MCQ" | "TF" | "ESSAY";
@@ -229,6 +230,7 @@ type CreateExamInput = {
   end_time: string;
   duration: number;
   require_camera: boolean;
+  require_identity_verification: boolean;
   shuffle: boolean;
   status: ExamStatus;
   question_ids: string[];
@@ -378,6 +380,7 @@ export const getExam = createServerFn({ method: "GET" })
       end_time: exam.end_time,
       duration: exam.duration,
       require_camera: exam.require_camera ?? false,
+      require_identity_verification: exam.require_identity_verification ?? false,
       shuffle: exam.shuffle ?? false,
       questions_count: exam.questions_count,
       status: exam.status,
@@ -405,6 +408,7 @@ export const createExam = createServerFn({ method: "POST" })
         end_time: data.end_time,
         duration: data.duration,
         require_camera: data.require_camera,
+        require_identity_verification: data.require_identity_verification,
         shuffle: data.shuffle,
         status: data.status,
         questions_count: data.question_ids.length,
@@ -465,7 +469,7 @@ export const updateExam = createServerFn({ method: "POST" })
       // toggle pre-start.
       const { error } = await db(supabase)
         .from("exams")
-        .update({ title: data.title, require_camera: data.require_camera, shuffle: data.shuffle })
+        .update({ title: data.title, require_camera: data.require_camera, require_identity_verification: data.require_identity_verification, shuffle: data.shuffle })
         .eq("id", data.id);
       if (error) throw new Error(error.message);
       return { id: data.id as string };
@@ -481,6 +485,7 @@ export const updateExam = createServerFn({ method: "POST" })
         end_time: data.end_time,
         duration: data.duration,
         require_camera: data.require_camera,
+        require_identity_verification: data.require_identity_verification,
         shuffle: data.shuffle,
         status: data.status,
         questions_count: data.question_ids.length,
@@ -1064,6 +1069,7 @@ export const getStudentExamLobby = createServerFn({ method: "GET" })
       questions_count: exam.questions_count,
       status: exam.status as ExamStatus,
       require_camera: exam.require_camera ?? false,
+      require_identity_verification: exam.require_identity_verification ?? false,
       existingSubmission: sub ? { id: sub.id, status: sub.status } : null,
     };
   });

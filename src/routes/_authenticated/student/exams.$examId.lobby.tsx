@@ -3,7 +3,9 @@ import { useState, useEffect } from "react";
 import { PageHeader, Card } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
+import { IdentityGate } from "@/components/brand/identity-gate";
 import { getStudentExamLobby, startExam } from "@/lib/supabase/exams";
+import { faceBindSession } from "@/lib/supabase/face";
 import { fmtMY } from "@/lib/datetime";
 import {
   MonitorPlay,
@@ -43,6 +45,7 @@ function Lobby() {
   const [agreed, setAgreed] = useState(false);
   const [starting, setStarting] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
+  const [identityPassed, setIdentityPassed] = useState(!exam.require_identity_verification);
 
   const existingStatus = exam.existingSubmission?.status;
   const isRetake = existingStatus === "retake-approved";
@@ -146,6 +149,9 @@ function Lobby() {
       // false "exited fullscreen" flag before the student has done anything.
       await document.documentElement.requestFullscreen().catch(() => {});
       const { submissionId } = await startExam({ data: exam.id });
+      if (exam.require_identity_verification) {
+        await faceBindSession({ data: { submissionId, examId: exam.id } });
+      }
       // On a retake the server reuses the same submission row (same id), so
       // sessionStorage still holds the previous attempt's answers. Clear them
       // now so the retake page starts completely blank.
@@ -298,10 +304,18 @@ function Lobby() {
               Complete the camera check on the left to continue.
             </p>
           )}
+          {exam.require_identity_verification && (
+            <div className="mt-4">
+              <div className="text-xs font-mono uppercase tracking-widest text-ink/60 mb-2">
+                Identity check
+              </div>
+              <IdentityGate examId={exam.id} onPassed={() => setIdentityPassed(true)} />
+            </div>
+          )}
           <WakeoutButton
             variant="primary"
             size="default"
-            disabled={!agreed || starting || (exam.require_camera && !cameraReady)}
+            disabled={!agreed || starting || (exam.require_camera && !cameraReady) || !identityPassed}
             onClick={handleStart}
             className="mt-4 w-full rounded-2xl"
           >
