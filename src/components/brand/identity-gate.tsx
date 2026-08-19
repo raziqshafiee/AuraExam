@@ -30,6 +30,16 @@ export function IdentityGate({
   const [state, setState] = useState<"idle" | "checking" | "passed" | "retry" | "failsoft">("idle");
   const [guidance, setGuidance] = useState<string | null>(null);
   const clientFailCount = useRef(0);
+  // Which cause tripped fail-soft, so the UI can show an honest message.
+  // "server": faceVerify itself returned attemptsRemaining: 0 (or the
+  //   no-active-enrollment case) — a face_verifications row was written and
+  //   the lecturer WAS actually notified server-side (see notifyIdentityUnverified
+  //   in src/lib/supabase/face.ts).
+  // "client": the MAX_CLIENT_RETRIES cap tripped without ever reaching
+  //   faceVerify (bad camera, no face ever detected, thrown errors) — no
+  //   verification attempt was ever logged and no one was notified, so the
+  //   copy must not claim otherwise.
+  const [failsoftReason, setFailsoftReason] = useState<"server" | "client" | null>(null);
 
   // Any failure that never produced a server-side faceVerify attempt (quality
   // gate rejection, camera error, thrown exception) routes through here so it
@@ -38,6 +48,7 @@ export function IdentityGate({
   function handleClientFailure(reason: string) {
     clientFailCount.current += 1;
     if (clientFailCount.current >= MAX_CLIENT_RETRIES) {
+      setFailsoftReason("client");
       setState("failsoft");
       onPassed(true);
     } else {
@@ -87,6 +98,11 @@ export function IdentityGate({
         setGuidance(res.guidance ?? null);
         setState("retry");
       } else {
+        // Server-authoritative fail-soft: faceVerify already wrote a
+        // face_verifications row and notified the lecturer (see
+        // notifyIdentityUnverified in src/lib/supabase/face.ts) — safe to
+        // claim that in the UI.
+        setFailsoftReason("server");
         setState("failsoft");
         onPassed(true);
       }
@@ -110,7 +126,10 @@ export function IdentityGate({
           <WakeoutButton className="w-full" onClick={runCheck}>Try again</WakeoutButton>
         </div>
       )}
-      {state === "failsoft" && (
+      {state === "failsoft" && failsoftReason === "client" && (
+        <p className="text-sm text-pink">We couldn't get a clear view of your face after several tries — you may still begin. This attempt may be reviewed by your lecturer.</p>
+      )}
+      {state === "failsoft" && failsoftReason !== "client" && (
         <p className="text-sm text-pink">We couldn't confirm your identity — your lecturer has been notified. You may still begin.</p>
       )}
     </div>
