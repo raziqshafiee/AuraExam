@@ -712,7 +712,22 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
         submittedAt: null,
         flagReasons: [],
         essayAnswers: [],
+        identity: null,
       }));
+
+    // Most-recent face_verifications row per submission, across all contexts
+    // (lobby/in_exam/submit) — drives the identity badge on the results page.
+    const { data: identityRows } = subIds.length > 0
+      ? await db(supabase).from("face_verifications").select("submission_id, context, passed, similarity, created_at").in("submission_id", subIds).order("created_at", { ascending: false })
+      : { data: [] };
+    const identityBySubmission: Record<string, { status: "verified" | "unverified" | "mismatch"; score: number }> = {};
+    for (const row of identityRows ?? []) {
+      if (identityBySubmission[row.submission_id]) continue; // most recent only (already sorted desc)
+      identityBySubmission[row.submission_id] = {
+        status: row.passed ? "verified" : row.context === "lobby" ? "unverified" : "mismatch",
+        score: row.similarity,
+      };
+    }
 
     const submissions = [
       ...(subs ?? []).map((s: any) => ({
@@ -739,6 +754,7 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
             answer: ea.answer,
             score: ea.score,
           })),
+        identity: identityBySubmission[s.id] ?? null,
       })),
       ...notAnsweredEntries,
     ];
@@ -923,6 +939,20 @@ export const getLecturerExamMonitor = createServerFn({ method: "GET" })
       .filter((e: any) => !startedIds.has(e.student_id))
       .map((e: any) => e.profiles?.name ?? "Unknown");
 
+    // Most-recent face_verifications row per submission, across all contexts
+    // (lobby/in_exam/submit) — drives the identity badge on the monitor page.
+    const { data: identityRows } = subIds.length > 0
+      ? await db(supabase).from("face_verifications").select("submission_id, context, passed, similarity, created_at").in("submission_id", subIds).order("created_at", { ascending: false })
+      : { data: [] };
+    const identityBySubmission: Record<string, { status: "verified" | "unverified" | "mismatch"; score: number }> = {};
+    for (const row of identityRows ?? []) {
+      if (identityBySubmission[row.submission_id]) continue; // most recent only (already sorted desc)
+      identityBySubmission[row.submission_id] = {
+        status: row.passed ? "verified" : row.context === "lobby" ? "unverified" : "mismatch",
+        score: row.similarity,
+      };
+    }
+
     return {
       exam: {
         id: exam.id,
@@ -941,6 +971,7 @@ export const getLecturerExamMonitor = createServerFn({ method: "GET" })
         submittedAt: s.submitted_at,
         lastSeenAt: s.last_seen_at ?? null,
         flagReasons: flagsBySubmission[s.id] ?? [],
+        identity: identityBySubmission[s.id] ?? null,
       })),
       notStarted,
     };
@@ -1086,7 +1117,7 @@ export const getExamForTaking = createServerFn({ method: "GET" })
 
     const { data: exam, error } = await db(supabase)
       .from("exams")
-      .select("id, title, duration, end_time, require_camera, shuffle, class_id, classes(code)")
+      .select("id, title, duration, end_time, require_camera, require_identity_verification, shuffle, class_id, classes(code)")
       .eq("id", examId)
       .single();
 
@@ -1173,6 +1204,7 @@ export const getExamForTaking = createServerFn({ method: "GET" })
         duration: exam.duration,
         end_time: exam.end_time,
         require_camera: exam.require_camera ?? false,
+        require_identity_verification: exam.require_identity_verification ?? false,
       },
       submission: sub ? { id: sub.id, status: sub.status } : null,
       remainingSeconds,

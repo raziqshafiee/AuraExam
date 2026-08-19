@@ -7,10 +7,47 @@ import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
 import { getExamForTaking, recordFlag, saveExamProgress, submitExam } from "@/lib/supabase/exams";
 import { recordHeartbeat } from "@/lib/supabase/proctor";
+import { faceVerify } from "@/lib/supabase/face";
+import { loadHuman } from "@/lib/face/human-loader";
+import { extractDescriptor } from "@/lib/face/descriptor";
 import { AUTOSAVE, ESSAY, INTEGRITY } from "@/lib/constants";
 import { Flag, Camera, ChevronLeft, ChevronRight, AlertTriangle, Maximize, X } from "lucide-react";
 import { toast } from "sonner";
 import { renderMarkdown, stripMarkdown } from "@/lib/render-text";
+
+// Resolves with `null` on timeout instead of rejecting — used to bound every
+// identity-check call (loadHuman/extractDescriptor/faceVerify) so a stalled
+// camera, model download, or network request can NEVER hang the caller.
+// Never rejects: a thrown/rejected `promise` also resolves to null. This is
+// the fail-soft primitive Task 5's review found missing (Global Constraint
+// #8) — every faceVerify call site added in Task 6 is wrapped with it.
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
+    }, ms);
+    promise.then(
+      (v) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(v);
+        }
+      },
+      () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(null);
+        }
+      }
+    );
+  });
+}
 
 export const Route = createFileRoute(
   "/_authenticated/student/exams/$examId/take"
@@ -111,6 +148,13 @@ function TakeExam() {
   // runs if we used null as the initial value, causing CameraProctor's
   // onHardFlag to silently drop flags during the remount window.
   const sendFlagRef = useRef<(type: string, label: string) => void>(() => {});
+
+  // Task 6: in-exam identity re-checks. Advisory only — never counted toward
+  // the 3-strike auto-submit (see handleIdentityTrigger below). Guards against
+  // overlapping checks if CameraProctor fires the trigger again before a prior
+  // check has resolved.
+  const consecutiveMismatchRef = useRef(0);
+  const identityCheckInFlightRef = useRef(false);
 
   // Persist ephemeral exam state so navigating to confirm + back restores it.
   useEffect(() => { try { sessionStorage.setItem(storageKey, JSON.stringify(answers)); } catch {} }, [answers]);
@@ -355,6 +399,53 @@ function TakeExam() {
     };
   }, []);
 
+  // Task 6: fired by CameraProctor's onIdentityTrigger whenever a single,
+  // present face just returned after being missing or after multiple faces
+  // were detected — the physical moment a proxy swap could have occurred.
+  // Every step (model load, descriptor extraction, network call) is timeout-
+  // bounded and every outcome — success, thrown error, rejection, or timeout —
+  // degrades to "this check just didn't happen this time". This function must
+  // NEVER throw and NEVER call recordFlag/sendFlag: faceVerify already writes
+  // its own face_verifications row + notifies the lecturer on a mismatch, and
+  // in-exam identity re-checks are advisory-only, not part of the 3-strike
+  // hard-flag auto-submit path.
+  async function handleIdentityTrigger() {
+    if (!exam.require_identity_verification || !submission?.id) return;
+    if (identityCheckInFlightRef.current) return;
+    identityCheckInFlightRef.current = true;
+    try {
+      const human = await withTimeout(loadHuman(), 15_000);
+      const video = document.querySelector<HTMLVideoElement>("video");
+      if (!human || !video) return;
+      const r = await withTimeout(extractDescriptor(human, video), 10_000);
+      if (!r || r.faceCount !== 1) return;
+      const res = await withTimeout(
+        faceVerify({
+          data: {
+            context: "in_exam",
+            examId: exam.id,
+            submissionId: submission.id,
+            embeddings: [r.descriptor],
+            antispoofScore: r.antispoofScore,
+            livenessScore: r.livenessScore,
+          },
+        }),
+        12_000
+      );
+      if (!res) return; // timed out, threw, or rejected — treat as "didn't happen"
+      consecutiveMismatchRef.current = res.passed ? 0 : consecutiveMismatchRef.current + 1;
+      // 3 consecutive mismatches (Global Constraint #8: advisory only, never
+      // counted toward the 3-strike auto-submit — faceVerify already writes the
+      // flag via its own face_verifications row + pushNotification, no call to
+      // recordFlag here).
+    } catch {
+      // Belt-and-braces — withTimeout already never rejects, but this
+      // function must be bulletproof against any future change upstream.
+    } finally {
+      identityCheckInFlightRef.current = false;
+    }
+  }
+
   const q = questions[idx];
 
   function setAns(v: string) {
@@ -405,6 +496,33 @@ function TakeExam() {
     setSubmitting(true);
     submittingRef.current = true;
     try {
+      // Task 6: best-effort submit-time identity snapshot. Hard-capped at 8s
+      // total via withTimeout (never rejects, never hangs) so a camera/model/
+      // network hiccup here can NEVER delay or prevent the actual submitExam
+      // call directly below — that call is untouched and always fires.
+      if (exam.require_identity_verification) {
+        await withTimeout(
+          (async () => {
+            const human = await loadHuman();
+            const video = document.querySelector<HTMLVideoElement>("video");
+            if (!human || !video) return;
+            const r = await extractDescriptor(human, video);
+            if (!r || r.faceCount !== 1) return;
+            await faceVerify({
+              data: {
+                context: "submit",
+                examId: exam.id,
+                submissionId: submission.id,
+                embeddings: [r.descriptor],
+                antispoofScore: r.antispoofScore,
+                livenessScore: r.livenessScore,
+              },
+            }).catch(() => {});
+          })(),
+          8_000
+        );
+      }
+
       await submitExam({
         data: { examId: exam.id, submissionId: submission.id, answers },
       });
@@ -560,6 +678,7 @@ function TakeExam() {
           mode="monitor"
           submissionId={submission?.id}
           onHardFlag={(type, label) => sendFlagRef.current(type, label)}
+          onIdentityTrigger={exam.require_identity_verification ? handleIdentityTrigger : undefined}
         />
       )}
       <div className="grid lg:grid-cols-[1fr_280px] gap-6 p-4 md:p-8">

@@ -75,10 +75,13 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag, onIdent
   const mountedRef = useRef(true);
   const onHardFlagRef = useRef(onHardFlag);
   onHardFlagRef.current = onHardFlag;
-  // Not called yet — Task 6 wires this once face-verify exists. Kept as a ref
-  // so it's already threaded through without requiring another prop-drilling pass.
   const onIdentityTriggerRef = useRef(onIdentityTrigger);
   onIdentityTriggerRef.current = onIdentityTrigger;
+  // Tracks whether the camera was previously in a failed/denied state, so the
+  // "camera-restored" identity trigger only fires on the actual 0->1
+  // transition (a genuine reconnect), never on every successful startCamera
+  // call (e.g. the normal first-mount path).
+  const wasCameraLostRef = useRef(false);
   // Latest facial blendshapes (categoryName -> score), refreshed each detection
   // tick alongside the transformation matrix. Task 6's liveness-challenge flow
   // reads this via a forwarded ref/callback; not consumed within this file yet.
@@ -93,6 +96,9 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag, onIdent
     lastMultipleReport: 0,
     lastGazeReport: 0,
     lastHeadTurnReport: 0,
+    // -1 = "no reading yet" sentinel so the very first detection tick never
+    // looks like a resolution edge.
+    prevFaceCount: -1,
   });
 
   const reportingEnabled = mode === "monitor" && !!submissionId;
@@ -110,6 +116,17 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag, onIdent
   function handleProctorTick(faceCount: number, matrix: Float32Array | null) {
     const now = Date.now();
     const p = proctorRef.current;
+    const prevFaceCount = p.prevFaceCount;
+
+    // ── Identity re-check trigger (Task 6) ───────────────────────────────────
+    // A single, present face just returned after being missing (0) or after
+    // multiple faces were detected (>1) — the physical moment a proxy swap
+    // could have occurred. Fire-and-forget from the caller's perspective; this
+    // component never awaits or depends on the result.
+    if (faceCount === 1 && (prevFaceCount === 0 || prevFaceCount > 1)) {
+      onIdentityTriggerRef.current?.("single-face-restored");
+    }
+    p.prevFaceCount = faceCount;
 
     // ── Face missing (advisory) ──────────────────────────────────────────────
     if (faceCount === 0) {
@@ -213,12 +230,19 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag, onIdent
         video.srcObject = stream;
         await video.play();
       }
+      // Only fires on the actual failed->recovered transition, not on the
+      // normal first-mount success path.
+      if (wasCameraLostRef.current) {
+        wasCameraLostRef.current = false;
+        onIdentityTriggerRef.current?.("camera-restored");
+      }
       setPerm("granted");
       setFace("loading");
       await loadDetector();
     } catch {
       if (!mountedRef.current) return;
       setPerm("denied");
+      wasCameraLostRef.current = true;
       if (reportingEnabled) report("camera-lost", "Camera unavailable during exam");
     }
   }

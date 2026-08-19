@@ -9,6 +9,7 @@ import {
   Users, UserX, CameraOff, EyeOff, ArrowLeftRight, Timer,
 } from "lucide-react";
 import { fmtMY } from "@/lib/datetime";
+import { IdentityBadge } from "@/components/brand/identity-badge";
 
 export const Route = createFileRoute(
   "/_authenticated/lecturer/exams/$examId/monitor"
@@ -250,6 +251,10 @@ function Monitor() {
                       ))}
                     </div>
                     <FlagLog flagReasons={flagReasons} />
+                    <div className="flex items-center justify-between mt-1.5">
+                      <span className="text-[10px] font-mono text-muted-foreground">Identity</span>
+                      <IdentityBadge status={s.identity?.status ?? null} score={s.identity?.score} />
+                    </div>
                   </div>
 
                   {/* Score */}

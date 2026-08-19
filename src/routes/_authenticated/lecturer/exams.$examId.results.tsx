@@ -23,6 +23,7 @@ type Submission = {
   submittedAt: string | null;
   flagReasons: { time: string; type: string; label: string }[];
   essayAnswers: EssayAnswer[];
+  identity: { status: "verified" | "unverified" | "mismatch"; score: number } | null;
 };
 
 import { Card, PageHeader, Section } from "@/components/brand/page";
@@ -32,6 +33,7 @@ import { ChevronDown, ChevronUp, AlertTriangle } from "lucide-react";
 import { fmtMY } from "@/lib/datetime";
 import { toast } from "sonner";
 import { buildCSV, downloadCSV, printTable } from "@/lib/export";
+import { IdentityBadge } from "@/components/brand/identity-badge";
 
 export const Route = createFileRoute("/_authenticated/lecturer/exams/$examId/results")({
   head: () => ({ meta: [{ title: "Results — Aura" }] }),
@@ -362,8 +364,8 @@ function Results() {
                     )}
 
                     {/* Footer */}
-                    <div className="flex items-center justify-between pt-1 border-t border-ink/10">
-                      <div className="text-xs font-mono">
+                    <div className="flex items-center justify-between pt-1 border-t border-ink/10 gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 text-xs font-mono">
                         {s.flags > 0 ? (
                           <span className="flex items-center gap-1 text-pink font-bold">
                             <AlertTriangle className="w-3.5 h-3.5" /> {s.flags} flag{s.flags !== 1 ? "s" : ""}
@@ -371,6 +373,7 @@ function Results() {
                         ) : (
                           <span className="text-muted-foreground">0 flags</span>
                         )}
+                        <IdentityBadge status={s.identity?.status ?? null} score={s.identity?.score} />
                       </div>
                       {!isNA && (
                         <ExportMenu label="Slip" onCSV={() => exportSlipCSV(s)} onPDF={() => exportSlipPDF(s)} />
