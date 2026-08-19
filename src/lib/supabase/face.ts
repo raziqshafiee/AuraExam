@@ -229,6 +229,160 @@ export const faceEnroll = createServerFn({ method: "POST" })
     };
   });
 
+// GET: admin review queue — oldest first
+export const getFaceReviewQueue = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+  const { data: profile } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+  if (profile?.role !== "admin") throw new Error("Forbidden");
+
+  const admin = createAdminClient();
+  const { data, error } = await (admin as any)
+    .from("face_enrollments")
+    .select("id, user_id, card_live_score, evidence_path, created_at")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+
+  const rows = data ?? [];
+  // Manual join, not a PostgREST embed: face_enrollments.user_id references
+  // auth.users(id), not profiles(id), so `profiles!user_id(...)` cannot be
+  // resolved by PostgREST's relationship inference (unlike e.g. audit_log,
+  // whose actor_id has a direct FK to profiles). Confirmed against the real
+  // dev schema — the embedded-select form throws "Could not find a
+  // relationship between 'face_enrollments' and 'profiles'".
+  const userIds = [...new Set(rows.map((r: any) => r.user_id))];
+  const { data: profiles } = userIds.length
+    ? await (admin as any).from("profiles").select("id, name, matric_no").in("id", userIds)
+    : { data: [] };
+  const profileById = new Map((profiles ?? []).map((p: any) => [p.id, p]));
+
+  return rows.map((r: any) => {
+    const p = profileById.get(r.user_id);
+    return {
+      id: r.id,
+      studentName: p?.name ?? "Unknown",
+      matricNo: p?.matric_no ?? "",
+      similarity: r.card_live_score,
+      evidencePath: r.evidence_path,
+      createdAt: r.created_at,
+    };
+  });
+});
+
+// POST: admin approve/reject — evidence deleted on EITHER outcome.
+export const faceReview = createServerFn({ method: "POST" })
+  .inputValidator((data: { enrollmentId: string; decision: "approve" | "reject"; reason?: string }) => data)
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+    const { data: profile } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+    if (profile?.role !== "admin") throw new Error("Forbidden");
+
+    const admin = createAdminClient();
+    const { data: enrollment } = await (admin as any)
+      .from("face_enrollments")
+      .select("id, user_id, evidence_path, status")
+      .eq("id", data.enrollmentId)
+      .single();
+    if (!enrollment || enrollment.status !== "pending") throw new Error("This enrollment is not awaiting review");
+
+    const newStatus = data.decision === "approve" ? "active" : "rejected";
+    if (newStatus === "active") {
+      await (admin as any).from("face_enrollments").update({ status: "superseded" }).eq("user_id", enrollment.user_id).eq("status", "active");
+    }
+    await (admin as any)
+      .from("face_enrollments")
+      .update({ status: newStatus, reviewed_by: user.id, reviewed_at: new Date().toISOString(), reject_reason: data.reason ?? null, evidence_path: null })
+      .eq("id", data.enrollmentId);
+
+    if (enrollment.evidence_path) {
+      await (admin as any).storage.from("identity-evidence").remove([enrollment.evidence_path]);
+    }
+
+    await pushNotification(supabase, {
+      userId: enrollment.user_id,
+      type: "identity_reviewed",
+      title: newStatus === "active" ? "Identity verified" : "Identity verification rejected",
+      body: newStatus === "active" ? "Your Face Match enrollment was approved." : (data.reason ?? "Please contact your lecturer for supervised verification."),
+    });
+    await writeAudit(user.id, { action: `${newStatus === "active" ? "Approved" : "Rejected"} face enrollment`, target: enrollment.user_id, category: "identity" });
+
+    return { success: true as const };
+  });
+
+// GET: short-TTL signed URL for one evidence file — authorization-checked.
+export const getFaceEvidenceUrl = createServerFn({ method: "GET" })
+  .inputValidator((path: string) => path)
+  .handler(async ({ data: path }) => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+    const { data: profile } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+    const ownerId = path.split("/")[0];
+    const isOwner = ownerId === user.id;
+    const isAdmin = profile?.role === "admin";
+    if (!isOwner && !isAdmin) throw new Error("Forbidden");
+
+    const admin = createAdminClient();
+    const { data: signed, error } = await (admin as any).storage.from("identity-evidence").createSignedUrl(path, 300);
+    if (error) throw new Error(error.message);
+    return { url: signed.signedUrl as string };
+  });
+
+// POST: nightly retention sweep — deletes storage objects for evidence whose
+// evidence_path was already nulled by Task 1's pg_cron SQL job (that job
+// only nulls the DB column; this function does the actual storage delete,
+// since SQL cannot call the Storage API). Also usable on-demand if pg_cron is
+// disabled on this Supabase plan, mirroring the syncExamStatuses fallback
+// pattern already used for exam lifecycle.
+//
+// Sweeps BOTH tables that hold identity-evidence storage paths:
+//  - face_enrollments: Task 1's pg_cron job never touches this table at all
+//    (it only UPDATEs face_verifications), so pending/rejected enrollment
+//    evidence — including the co-presence card+face shot — would otherwise
+//    never be deleted from storage. This is the gap this task closes.
+//  - face_verifications: Task 1's pg_cron job nulls evidence_path here
+//    nightly but, being plain SQL, cannot call the Storage API — so the
+//    JPEG objects themselves are left orphaned in the bucket forever unless
+//    something does the actual `storage.remove()`. Nothing else in the
+//    codebase does that, so this function does it directly here (matching
+//    on created_at + retention window, since the DB column may already be
+//    null by the time this runs).
+export const facePurge = createServerFn({ method: "POST" }).handler(async () => {
+  const admin = createAdminClient();
+  const settings = await getFaceSettings();
+  const cutoff = new Date(Date.now() - settings.evidenceRetentionDays * 86_400_000).toISOString();
+
+  const { data: staleEnrollments } = await (admin as any)
+    .from("face_enrollments")
+    .select("id, evidence_path")
+    .not("evidence_path", "is", null)
+    .lt("created_at", cutoff);
+
+  const enrollmentPaths = (staleEnrollments ?? []).map((r: any) => r.evidence_path).filter(Boolean);
+  if (enrollmentPaths.length > 0) {
+    await (admin as any).storage.from("identity-evidence").remove(enrollmentPaths);
+    await (admin as any).from("face_enrollments").update({ evidence_path: null }).in("id", (staleEnrollments ?? []).map((r: any) => r.id));
+  }
+
+  const { data: staleVerifications } = await (admin as any)
+    .from("face_verifications")
+    .select("id, evidence_path")
+    .not("evidence_path", "is", null)
+    .lt("created_at", cutoff);
+
+  const verificationPaths = (staleVerifications ?? []).map((r: any) => r.evidence_path).filter(Boolean);
+  if (verificationPaths.length > 0) {
+    await (admin as any).storage.from("identity-evidence").remove(verificationPaths);
+    await (admin as any).from("face_verifications").update({ evidence_path: null }).in("id", (staleVerifications ?? []).map((r: any) => r.id));
+  }
+
+  return { purged: enrollmentPaths.length + verificationPaths.length };
+});
+
 async function recordAttempt(
   admin: any,
   userId: string,

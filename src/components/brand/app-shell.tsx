@@ -5,7 +5,7 @@ import { useAuthUser, signOut, type Role } from "@/lib/auth";
 import {
   Bell, LogOut, User, ChevronDown, ChevronRight, ChevronLeft, Menu,
   LayoutDashboard, BookOpen, FileText, Library, Scale,
-  Users, ScrollText, ShieldAlert, Lightbulb,
+  Users, ScrollText, ShieldAlert, Lightbulb, ScanFace,
   type LucideIcon,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -42,6 +42,7 @@ const PRIMARY_NAV: Record<Role, NavItem[]> = {
     { to: "/admin/exams",      label: "Exams",     icon: FileText },
     { to: "/admin/integrity",  label: "Integrity", icon: ShieldAlert },
     { to: "/admin/audit-log",  label: "Audit Log", icon: ScrollText },
+    { to: "/admin/identity",   label: "Identity",  icon: ScanFace },
   ],
 };
 
