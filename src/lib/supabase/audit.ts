@@ -10,7 +10,8 @@ export type AuditCategory =
   | "integrity"
   | "appeal"
   | "class"
-  | "general";
+  | "general"
+  | "identity";
 
 // Called inside server functions — never throws, audit failures must not
 // break the primary operation.

@@ -23,11 +23,11 @@ import { Route as AuthenticatedStudyIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedStudentIndexRouteImport } from './routes/_authenticated/student/index'
 import { Route as AuthenticatedLecturerIndexRouteImport } from './routes/_authenticated/lecturer/index'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin/index'
+import { Route as AuthenticatedStudentVerifyIdentityRouteImport } from './routes/_authenticated/student/verify-identity'
 import { Route as AuthenticatedStudentProfileRouteImport } from './routes/_authenticated/student/profile'
 import { Route as AuthenticatedStudentNotificationsRouteImport } from './routes/_authenticated/student/notifications'
 import { Route as AuthenticatedLecturerProfileRouteImport } from './routes/_authenticated/lecturer/profile'
 import { Route as AuthenticatedLecturerNotificationsRouteImport } from './routes/_authenticated/lecturer/notifications'
-import { Route as AuthenticatedLecturerFaceDevTestRouteImport } from './routes/_authenticated/lecturer/face-dev-test'
 import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
 import { Route as AuthenticatedAdminSettingsRouteImport } from './routes/_authenticated/admin/settings'
 import { Route as AuthenticatedAdminIntegrityRouteImport } from './routes/_authenticated/admin/integrity'
@@ -129,6 +129,12 @@ const AuthenticatedAdminIndexRoute = AuthenticatedAdminIndexRouteImport.update({
   path: '/admin/',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedStudentVerifyIdentityRoute =
+  AuthenticatedStudentVerifyIdentityRouteImport.update({
+    id: '/student/verify-identity',
+    path: '/student/verify-identity',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedStudentProfileRoute =
   AuthenticatedStudentProfileRouteImport.update({
     id: '/student/profile',
@@ -151,12 +157,6 @@ const AuthenticatedLecturerNotificationsRoute =
   AuthenticatedLecturerNotificationsRouteImport.update({
     id: '/lecturer/notifications',
     path: '/lecturer/notifications',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedLecturerFaceDevTestRoute =
-  AuthenticatedLecturerFaceDevTestRouteImport.update({
-    id: '/lecturer/face-dev-test',
-    path: '/lecturer/face-dev-test',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedAdminUsersRoute = AuthenticatedAdminUsersRouteImport.update({
@@ -348,11 +348,11 @@ export interface FileRoutesByFullPath {
   '/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
-  '/lecturer/face-dev-test': typeof AuthenticatedLecturerFaceDevTestRoute
   '/lecturer/notifications': typeof AuthenticatedLecturerNotificationsRoute
   '/lecturer/profile': typeof AuthenticatedLecturerProfileRoute
   '/student/notifications': typeof AuthenticatedStudentNotificationsRoute
   '/student/profile': typeof AuthenticatedStudentProfileRoute
+  '/student/verify-identity': typeof AuthenticatedStudentVerifyIdentityRoute
   '/admin/': typeof AuthenticatedAdminIndexRoute
   '/lecturer/': typeof AuthenticatedLecturerIndexRoute
   '/student/': typeof AuthenticatedStudentIndexRoute
@@ -397,11 +397,11 @@ export interface FileRoutesByTo {
   '/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
-  '/lecturer/face-dev-test': typeof AuthenticatedLecturerFaceDevTestRoute
   '/lecturer/notifications': typeof AuthenticatedLecturerNotificationsRoute
   '/lecturer/profile': typeof AuthenticatedLecturerProfileRoute
   '/student/notifications': typeof AuthenticatedStudentNotificationsRoute
   '/student/profile': typeof AuthenticatedStudentProfileRoute
+  '/student/verify-identity': typeof AuthenticatedStudentVerifyIdentityRoute
   '/admin': typeof AuthenticatedAdminIndexRoute
   '/lecturer': typeof AuthenticatedLecturerIndexRoute
   '/student': typeof AuthenticatedStudentIndexRoute
@@ -448,11 +448,11 @@ export interface FileRoutesById {
   '/_authenticated/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
   '/_authenticated/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
-  '/_authenticated/lecturer/face-dev-test': typeof AuthenticatedLecturerFaceDevTestRoute
   '/_authenticated/lecturer/notifications': typeof AuthenticatedLecturerNotificationsRoute
   '/_authenticated/lecturer/profile': typeof AuthenticatedLecturerProfileRoute
   '/_authenticated/student/notifications': typeof AuthenticatedStudentNotificationsRoute
   '/_authenticated/student/profile': typeof AuthenticatedStudentProfileRoute
+  '/_authenticated/student/verify-identity': typeof AuthenticatedStudentVerifyIdentityRoute
   '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
   '/_authenticated/lecturer/': typeof AuthenticatedLecturerIndexRoute
   '/_authenticated/student/': typeof AuthenticatedStudentIndexRoute
@@ -499,11 +499,11 @@ export interface FileRouteTypes {
     | '/admin/integrity'
     | '/admin/settings'
     | '/admin/users'
-    | '/lecturer/face-dev-test'
     | '/lecturer/notifications'
     | '/lecturer/profile'
     | '/student/notifications'
     | '/student/profile'
+    | '/student/verify-identity'
     | '/admin/'
     | '/lecturer/'
     | '/student/'
@@ -548,11 +548,11 @@ export interface FileRouteTypes {
     | '/admin/integrity'
     | '/admin/settings'
     | '/admin/users'
-    | '/lecturer/face-dev-test'
     | '/lecturer/notifications'
     | '/lecturer/profile'
     | '/student/notifications'
     | '/student/profile'
+    | '/student/verify-identity'
     | '/admin'
     | '/lecturer'
     | '/student'
@@ -598,11 +598,11 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/integrity'
     | '/_authenticated/admin/settings'
     | '/_authenticated/admin/users'
-    | '/_authenticated/lecturer/face-dev-test'
     | '/_authenticated/lecturer/notifications'
     | '/_authenticated/lecturer/profile'
     | '/_authenticated/student/notifications'
     | '/_authenticated/student/profile'
+    | '/_authenticated/student/verify-identity'
     | '/_authenticated/admin/'
     | '/_authenticated/lecturer/'
     | '/_authenticated/student/'
@@ -745,6 +745,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/student/verify-identity': {
+      id: '/_authenticated/student/verify-identity'
+      path: '/student/verify-identity'
+      fullPath: '/student/verify-identity'
+      preLoaderRoute: typeof AuthenticatedStudentVerifyIdentityRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/student/profile': {
       id: '/_authenticated/student/profile'
       path: '/student/profile'
@@ -771,13 +778,6 @@ declare module '@tanstack/react-router' {
       path: '/lecturer/notifications'
       fullPath: '/lecturer/notifications'
       preLoaderRoute: typeof AuthenticatedLecturerNotificationsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/lecturer/face-dev-test': {
-      id: '/_authenticated/lecturer/face-dev-test'
-      path: '/lecturer/face-dev-test'
-      fullPath: '/lecturer/face-dev-test'
-      preLoaderRoute: typeof AuthenticatedLecturerFaceDevTestRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/admin/users': {
@@ -993,11 +993,11 @@ interface AuthenticatedRouteChildren {
   AuthenticatedAdminIntegrityRoute: typeof AuthenticatedAdminIntegrityRoute
   AuthenticatedAdminSettingsRoute: typeof AuthenticatedAdminSettingsRoute
   AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
-  AuthenticatedLecturerFaceDevTestRoute: typeof AuthenticatedLecturerFaceDevTestRoute
   AuthenticatedLecturerNotificationsRoute: typeof AuthenticatedLecturerNotificationsRoute
   AuthenticatedLecturerProfileRoute: typeof AuthenticatedLecturerProfileRoute
   AuthenticatedStudentNotificationsRoute: typeof AuthenticatedStudentNotificationsRoute
   AuthenticatedStudentProfileRoute: typeof AuthenticatedStudentProfileRoute
+  AuthenticatedStudentVerifyIdentityRoute: typeof AuthenticatedStudentVerifyIdentityRoute
   AuthenticatedAdminIndexRoute: typeof AuthenticatedAdminIndexRoute
   AuthenticatedLecturerIndexRoute: typeof AuthenticatedLecturerIndexRoute
   AuthenticatedStudentIndexRoute: typeof AuthenticatedStudentIndexRoute
@@ -1034,13 +1034,14 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAdminIntegrityRoute: AuthenticatedAdminIntegrityRoute,
   AuthenticatedAdminSettingsRoute: AuthenticatedAdminSettingsRoute,
   AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,
-  AuthenticatedLecturerFaceDevTestRoute: AuthenticatedLecturerFaceDevTestRoute,
   AuthenticatedLecturerNotificationsRoute:
     AuthenticatedLecturerNotificationsRoute,
   AuthenticatedLecturerProfileRoute: AuthenticatedLecturerProfileRoute,
   AuthenticatedStudentNotificationsRoute:
     AuthenticatedStudentNotificationsRoute,
   AuthenticatedStudentProfileRoute: AuthenticatedStudentProfileRoute,
+  AuthenticatedStudentVerifyIdentityRoute:
+    AuthenticatedStudentVerifyIdentityRoute,
   AuthenticatedAdminIndexRoute: AuthenticatedAdminIndexRoute,
   AuthenticatedLecturerIndexRoute: AuthenticatedLecturerIndexRoute,
   AuthenticatedStudentIndexRoute: AuthenticatedStudentIndexRoute,

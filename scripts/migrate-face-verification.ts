@@ -272,6 +272,22 @@ async function migrate() {
     console.warn(`!!  pg_cron scheduling skipped (${e?.message ?? e}) — evidence_path nulling can be run manually.`);
   }
 
+  // 11. pgvector duplicate-scan helper — SQL function so the 1:N cosine-distance
+  //     scan runs inside Postgres using the ivfflat index, not row-by-row in JS.
+  //     (Added while implementing Task 3 — schema addition discovered during
+  //     enrollment-flow work, hence appended here rather than in Task 1.)
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION face_find_duplicates(probe vector(1024), exclude_user uuid, threshold double precision)
+    RETURNS TABLE(user_id uuid, similarity double precision) AS $$
+      SELECT user_id, 1 - (embedding_reference <=> probe) AS similarity
+      FROM face_enrollments
+      WHERE status = 'active'
+        AND user_id != exclude_user
+        AND 1 - (embedding_reference <=> probe) >= threshold
+    $$ LANGUAGE sql STABLE;
+  `);
+  console.log("OK  face_find_duplicates() function created");
+
   console.log("\nMigration complete.");
   await pool.end();
 }
