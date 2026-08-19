@@ -150,7 +150,12 @@ function Lobby() {
       await document.documentElement.requestFullscreen().catch(() => {});
       const { submissionId } = await startExam({ data: exam.id });
       if (exam.require_identity_verification) {
-        await faceBindSession({ data: { submissionId, examId: exam.id } });
+        // Fire-and-forget: this only associates the lobby check with the
+        // submission for audit/monitor purposes. The submission row already
+        // exists at this point (startExam succeeded), so a transient failure
+        // here must never block the student's path into the exam they've
+        // already started — swallow the error and proceed to navigate.
+        await faceBindSession({ data: { submissionId, examId: exam.id } }).catch(() => {});
       }
       // On a retake the server reuses the same submission row (same id), so
       // sessionStorage still holds the previous attempt's answers. Clear them

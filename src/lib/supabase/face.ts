@@ -406,6 +406,34 @@ type VerifyInput = {
   evidenceJpegBase64?: string;
 };
 
+// Shared by both faceVerify exit paths that need to tell the student AND
+// their lecturer that identity could not be confirmed — Finding 4 (fix round
+// 1): the "no active enrollment" early return used to skip this entirely,
+// making IdentityGate's "your lecturer has been notified" message false for
+// that path. Never throws — a notification failure must not block the caller.
+async function notifyIdentityUnverified(
+  supabase: ReturnType<typeof createClient>,
+  admin: any,
+  userId: string,
+  examId: string,
+) {
+  try {
+    const { data: examRow } = await admin.from("exams").select("title, classes(lecturer_id)").eq("id", examId).single();
+    await pushNotification(supabase, {
+      userId, type: "identity_unverified", title: "Identity could not be confirmed",
+      body: `We couldn't confirm your identity for "${examRow?.title}". You may still continue — your lecturer has been notified.`,
+    }).catch(() => {});
+    if (examRow?.classes?.lecturer_id) {
+      await pushNotification(supabase, {
+        userId: examRow.classes.lecturer_id, type: "identity_unverified", title: "Student identity unverified",
+        body: `A student's identity could not be confirmed for "${examRow.title}".`, link: `/lecturer/exams/${examId}/monitor`,
+      }).catch(() => {});
+    }
+  } catch {
+    // Best-effort — never block the caller's fail-soft path on a notification error.
+  }
+}
+
 export const faceVerify = createServerFn({ method: "POST" })
   .inputValidator((data: VerifyInput) => data)
   .handler(async ({ data }) => {
@@ -424,6 +452,7 @@ export const faceVerify = createServerFn({ method: "POST" })
       .maybeSingle();
 
     if (!enrollment) {
+      await notifyIdentityUnverified(supabase, admin, user.id, data.examId);
       return { passed: false, similarity: 0, attemptsRemaining: 0, elevated: true, guidance: "No active enrollment — verify your identity from your dashboard first." };
     }
 
@@ -468,17 +497,7 @@ export const faceVerify = createServerFn({ method: "POST" })
 
     const elevated = !passed;
     if (!passed && (data.context !== "lobby" || attemptsRemaining === 0)) {
-      const { data: examRow } = await (admin as any).from("exams").select("title, classes(lecturer_id)").eq("id", data.examId).single();
-      await pushNotification(supabase, {
-        userId: user.id, type: "identity_unverified", title: "Identity could not be confirmed",
-        body: `We couldn't confirm your identity for "${examRow?.title}". You may still continue — your lecturer has been notified.`,
-      });
-      if (examRow?.classes?.lecturer_id) {
-        await pushNotification(supabase, {
-          userId: examRow.classes.lecturer_id, type: "identity_unverified", title: "Student identity unverified",
-          body: `A student's identity could not be confirmed for "${examRow.title}".`, link: `/lecturer/exams/${data.examId}/monitor`,
-        }).catch(() => {});
-      }
+      await notifyIdentityUnverified(supabase, admin, user.id, data.examId);
     }
 
     return {

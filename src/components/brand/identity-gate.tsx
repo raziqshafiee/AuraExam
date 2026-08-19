@@ -8,6 +8,17 @@ import { extractDescriptor } from "@/lib/face/descriptor";
 import { passesQualityGate } from "@/lib/face/quality";
 import { faceVerify } from "@/lib/supabase/face";
 
+// Client-side cap on quality-gate/error failures that never reach faceVerify
+// (bad camera, permanently poor lighting, thrown exceptions, permission
+// denial, etc.) — independent of and in addition to the server-authoritative
+// attempt count faceVerify itself tracks (which only ever sees attempts that
+// DID produce a usable frame). Without this, a student whose camera never
+// yields a passing frame has no path to attemptsRemaining === 0 server-side
+// and would be stuck retrying forever — a Global Constraint #8 violation
+// (fail-soft, everywhere). Mirrors the server's default maxAttempts (3);
+// hardcoded because settings aren't available client-side to a student.
+const MAX_CLIENT_RETRIES = 3;
+
 export function IdentityGate({
   examId,
   onPassed,
@@ -18,28 +29,73 @@ export function IdentityGate({
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<"idle" | "checking" | "passed" | "retry" | "failsoft">("idle");
   const [guidance, setGuidance] = useState<string | null>(null);
+  const clientFailCount = useRef(0);
+
+  // Any failure that never produced a server-side faceVerify attempt (quality
+  // gate rejection, camera error, thrown exception) routes through here so it
+  // counts toward MAX_CLIENT_RETRIES and is guaranteed to terminate in
+  // fail-soft, exactly like a server-exhausted attempt count does.
+  function handleClientFailure(reason: string) {
+    clientFailCount.current += 1;
+    if (clientFailCount.current >= MAX_CLIENT_RETRIES) {
+      setState("failsoft");
+      onPassed(true);
+    } else {
+      setGuidance(reason);
+      setState("retry");
+    }
+  }
 
   useEffect(() => {
-    navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
-      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
-    });
+    navigator.mediaDevices
+      .getUserMedia({ video: true })
+      .then((stream) => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        }
+      })
+      .catch(() => {
+        handleClientFailure("Camera access is required — check your browser permissions and try again.");
+      });
     loadHuman();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function runCheck() {
     setState("checking");
-    const human = await loadHuman();
-    if (!human || !videoRef.current) return;
-    const r = await extractDescriptor(human, videoRef.current);
-    const gate = passesQualityGate(r);
-    if (!gate.ok || !r) { setGuidance(gate.reason ?? "Try again"); setState("retry"); return; }
+    try {
+      const human = await loadHuman();
+      if (!human || !videoRef.current) {
+        handleClientFailure("Camera isn't ready yet — try again.");
+        return;
+      }
+      const r = await extractDescriptor(human, videoRef.current);
+      const gate = passesQualityGate(r);
+      if (!gate.ok || !r) {
+        handleClientFailure(gate.reason ?? "Try again");
+        return;
+      }
 
-    const res = await faceVerify({
-      data: { context: "lobby", examId, embeddings: [r.descriptor], antispoofScore: r.antispoofScore, livenessScore: r.livenessScore },
-    });
-    if (res.passed) { setState("passed"); onPassed(false); }
-    else if (res.attemptsRemaining > 0) { setGuidance(res.guidance ?? null); setState("retry"); }
-    else { setState("failsoft"); onPassed(true); }
+      const res = await faceVerify({
+        data: { context: "lobby", examId, embeddings: [r.descriptor], antispoofScore: r.antispoofScore, livenessScore: r.livenessScore },
+      });
+      if (res.passed) {
+        setState("passed");
+        onPassed(false);
+      } else if (res.attemptsRemaining > 0) {
+        setGuidance(res.guidance ?? null);
+        setState("retry");
+      } else {
+        setState("failsoft");
+        onPassed(true);
+      }
+    } catch {
+      // Camera glitch, transient network failure, or a server error — never
+      // leave state stuck at "checking". Route through the same bounded
+      // client-side retry cap as a quality-gate failure.
+      handleClientFailure("Something went wrong — check your camera connection and try again.");
+    }
   }
 
   return (
