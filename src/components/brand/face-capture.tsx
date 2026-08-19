@@ -12,7 +12,7 @@ import { passesQualityGate } from "@/lib/face/quality";
 // This powers a SEPARATE, lightweight, continuous detector used only to draw
 // a display-only bounding-box overlay while the camera preview is live.
 // Human itself stays strictly on-demand — capture() below still calls
-// loadHuman()/extractDescriptor() exactly once, unchanged, on click.
+// loadHuman()/extractDescriptor() exactly once per sample, unchanged.
 let preloadPromise: Promise<any> | null = null;
 function preloadMediaPipe() {
   if (!preloadPromise) {
@@ -55,12 +55,43 @@ function drawFaceBox(
   ctx.strokeRect(minX * w, minY * h, (maxX - minX) * w, (maxY - minY) * h);
 }
 
+const SAMPLE_INTERVAL_MS = 500;
+const MAX_RETRIES_PER_SLOT = 3;
+
+type CaptureAttempt =
+  | { ok: true; result: DescriptorResult; jpegBase64: string }
+  | { ok: false; reason: string };
+
 export function FaceCapture({
   guide,
+  mode = "identify",
+  samples = 1,
   onCapture,
 }: {
   guide: string;
-  onCapture: (result: DescriptorResult, jpegBase64: string) => void;
+  /**
+   * "identify" (default) runs Human/quality-gate as before — used for the
+   * card capture and the live-capture identity samples.
+   * "evidence" skips Human entirely and just grabs a raw JPEG snapshot — used
+   * for the co-presence (card + face) frame, where the card's own printed
+   * photo would often register as a second face and correctly (but
+   * unhelpfully) fail the single-face quality gate.
+   */
+  mode?: "identify" | "evidence";
+  /**
+   * Number of sequential identify-mode frames to gather from one Capture
+   * click (default 1). Each frame independently passes passesQualityGate;
+   * a failing slot retries in place (bounded) rather than silently advancing
+   * with fewer/duplicated samples. Ignored in "evidence" mode.
+   */
+  samples?: number;
+  /**
+   * Called once capture is complete. `results` has one entry per real
+   * captured+gated frame (evidence mode always passes an empty array — there
+   * is no descriptor). `jpegBase64` is the snapshot to use for display/
+   * evidence purposes — the last captured frame's JPEG in multi-sample mode.
+   */
+  onCapture: (results: DescriptorResult[], jpegBase64: string) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -70,6 +101,7 @@ export function FaceCapture({
   const trackerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [status, setStatus] = useState<"idle" | "starting" | "ready" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [captureProgress, setCaptureProgress] = useState<{ current: number; total: number } | null>(null);
 
   const start = useCallback(async () => {
     setStatus("starting");
@@ -86,6 +118,17 @@ export function FaceCapture({
       setStatus("error");
       setError("Camera access denied — enable it in your browser settings.");
     }
+  }, []);
+
+  // Release the camera when this FaceCapture instance unmounts. The wizard
+  // mounts a fresh FaceCapture per step (card, co-presence, live-capture) —
+  // without this the camera stayed claimed by each prior step's stream for
+  // the rest of the page's lifetime.
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
   }, []);
 
   // Lightweight continuous FaceLandmarker loop, started once the camera
@@ -146,38 +189,99 @@ export function FaceCapture({
     };
   }, [status]);
 
-  async function capture() {
+  // One identify-mode detection attempt: Human descriptor extraction +
+  // quality gate + JPEG snapshot. Never touches component state directly —
+  // callers decide how to surface failures (single-shot shows the reason
+  // immediately; multi-sample retries silently within its own budget).
+  async function runDetection(): Promise<CaptureAttempt> {
     const video = videoRef.current;
-    if (!video) return;
-    // Face detection can throw/reject (model glitch, WebGL context loss, etc).
-    // This must never crash the enrollment flow with an unhandled rejection —
-    // catch it here and surface it through the existing error state.
+    if (!video) return { ok: false, reason: "Camera not ready" };
     let result: DescriptorResult | null = null;
     try {
       const human = await loadHuman();
       if (!human) {
-        setError("Face detector failed to load — please refresh and try again.");
-        return;
+        return { ok: false, reason: "Face detector failed to load — please refresh and try again." };
       }
       result = await extractDescriptor(human, video);
     } catch {
-      setError("Face detection failed — please try again.");
-      return;
+      // Face detection can throw/reject (model glitch, WebGL context loss,
+      // etc). Never let this crash the enrollment flow with an unhandled
+      // rejection — surface it as a normal failed attempt instead.
+      return { ok: false, reason: "Face detection failed — please try again." };
     }
     const gate = passesQualityGate(result);
     if (!gate.ok || !result) {
-      setError(gate.reason ?? "Capture failed");
-      return;
+      return { ok: false, reason: gate.reason ?? "Capture failed" };
     }
-    setError(null);
-
     const canvas = canvasRef.current!;
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext("2d")!.drawImage(video, 0, 0);
     const jpegBase64 = canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
+    return { ok: true, result, jpegBase64 };
+  }
 
-    onCapture(result, jpegBase64);
+  async function capture() {
+    if (mode === "evidence") {
+      // Raw snapshot only — no Human, no single-face gate. A card-next-to-
+      // face co-presence frame will often have the card's printed photo also
+      // register as a face, which would correctly (but unhelpfully) fail the
+      // identify-mode quality gate even though this is exactly the shot we want.
+      const video = videoRef.current;
+      if (!video) return;
+      const canvas = canvasRef.current!;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d")!.drawImage(video, 0, 0);
+      const jpegBase64 = canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
+      setError(null);
+      onCapture([], jpegBase64);
+      return;
+    }
+
+    if (samples <= 1) {
+      const attempt = await runDetection();
+      if (!attempt.ok) {
+        setError(attempt.reason);
+        return;
+      }
+      setError(null);
+      onCapture([attempt.result], attempt.jpegBase64);
+      return;
+    }
+
+    // Multi-sample sequential capture: `samples` independent frames,
+    // ~SAMPLE_INTERVAL_MS apart (natural pose variation between them), each
+    // passing its own quality gate. A failing slot retries in place up to
+    // MAX_RETRIES_PER_SLOT rather than advancing with a duplicate/missing
+    // sample. If every slot exhausts its retry budget, we proceed with
+    // however many real samples we did get (at least one) rather than
+    // hanging indefinitely — faceEnroll's duplicate-scan mean works fine
+    // with fewer than 5 samples, it's just less pose-diverse.
+    setError(null);
+    const results: DescriptorResult[] = [];
+    let lastJpeg = "";
+    for (let i = 0; i < samples; i++) {
+      setCaptureProgress({ current: i, total: samples });
+      let attempt: CaptureAttempt | null = null;
+      for (let retry = 0; retry < MAX_RETRIES_PER_SLOT; retry++) {
+        attempt = await runDetection();
+        if (attempt.ok) break;
+        await new Promise((r) => setTimeout(r, SAMPLE_INTERVAL_MS));
+      }
+      if (attempt?.ok) {
+        results.push(attempt.result);
+        lastJpeg = attempt.jpegBase64;
+      }
+      if (i < samples - 1) await new Promise((r) => setTimeout(r, SAMPLE_INTERVAL_MS));
+    }
+    setCaptureProgress(null);
+
+    if (results.length === 0) {
+      setError("Couldn't capture a clear face after several attempts — please try again.");
+      return;
+    }
+    onCapture(results, lastJpeg);
   }
 
   return (
@@ -193,7 +297,10 @@ export function FaceCapture({
         <WakeoutButton variant="sky" size="sm" onClick={start} className="w-full"><Camera className="w-4 h-4" /> Start camera</WakeoutButton>
       )}
       {status === "ready" && (
-        <WakeoutButton variant="primary" size="sm" onClick={capture} className="w-full"><CheckCircle className="w-4 h-4" /> Capture</WakeoutButton>
+        <WakeoutButton variant="primary" size="sm" onClick={capture} disabled={!!captureProgress} className="w-full">
+          <CheckCircle className="w-4 h-4" />
+          {captureProgress ? `Capturing ${captureProgress.current + 1}/${captureProgress.total}…` : "Capture"}
+        </WakeoutButton>
       )}
       {error && <p className="text-sm text-pink">{error}</p>}
     </div>

@@ -16,7 +16,17 @@ export const Route = createFileRoute("/_authenticated/student/verify-identity")(
   component: VerifyIdentity,
 });
 
-type Step = "consent" | "card" | "matric" | "liveness" | "live-capture" | "done" | "rejected";
+type Step = "consent" | "card" | "co-presence" | "matric" | "liveness" | "live-capture" | "done" | "rejected";
+
+// Number of independent live descriptors captured in the live-capture step —
+// actual pose-diverse samples (see face-capture.tsx's multi-sample capture),
+// not one frame duplicated.
+const LIVE_SAMPLE_COUNT = 5;
+
+function average(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((s, v) => s + v, 0) / values.length;
+}
 
 // Module-level promise so the MediaPipe bundle is only fetched once, shared
 // with camera-proctor.tsx's own preload if it also ran this session.
@@ -72,6 +82,7 @@ function drawFaceBox(
 function VerifyIdentity() {
   const [step, setStep] = useState<Step>("consent");
   const [cardResult, setCardResult] = useState<DescriptorResult | null>(null);
+  const [evidenceJpeg, setEvidenceJpeg] = useState<string | null>(null);
   const [matricNo, setMatricNo] = useState("");
   const [challenge, setChallenge] = useState<{ challengeId: string; steps: string[] } | null>(null);
   const [attemptsRemaining, setAttemptsRemaining] = useState(3);
@@ -183,19 +194,27 @@ function VerifyIdentity() {
     setStep("live-capture");
   }
 
-  async function submitEnrollment(finalDescriptor: number[], evidenceJpegBase64: string, antispoofScore: number, livenessScore: number) {
-    if (!cardResult || !challenge) return;
+  async function submitEnrollment(liveResults: DescriptorResult[]) {
+    if (!cardResult || !challenge || !evidenceJpeg) return;
     try {
       const res = await faceEnroll({
         data: {
           embeddingCard: cardResult.descriptor,
-          embeddingSamples: [finalDescriptor, finalDescriptor, finalDescriptor, finalDescriptor, finalDescriptor],
+          // Real independent samples from the live-capture step (up to
+          // LIVE_SAMPLE_COUNT; fewer only if some slots exhausted their
+          // per-slot retry budget — see face-capture.tsx).
+          embeddingSamples: liveResults.map((r) => r.descriptor),
           matricNo,
           challengeId: challenge.challengeId,
           challengeStepsCompleted: challenge.steps,
-          antispoofScore,
-          livenessScore,
-          evidenceJpegBase64,
+          // Averaged across however many live samples we actually got —
+          // representative of the whole capture, not just one lucky frame.
+          antispoofScore: average(liveResults.map((r) => r.antispoofScore)),
+          livenessScore: average(liveResults.map((r) => r.livenessScore)),
+          // The co-presence (card + face) frame captured right after the
+          // card step, NOT a live-capture frame — this is what a reviewer
+          // in Task 4 actually needs to compare card-to-face.
+          evidenceJpegBase64: evidenceJpeg,
         },
       });
       if (res.status === "active") { setStep("done"); toast.success("Identity verified"); }
@@ -217,7 +236,23 @@ function VerifyIdentity() {
           </div>
         )}
         {step === "card" && (
-          <FaceCapture guide="Hold your student card so it fills the frame" onCapture={(r) => { setCardResult(r); setStep("matric"); }} />
+          <FaceCapture
+            guide="Hold your student card so it fills the frame"
+            onCapture={(results) => { setCardResult(results[0]); setStep("co-presence"); }}
+          />
+        )}
+        {step === "co-presence" && (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Now hold your card next to your face so both are visible together — this is the photo a reviewer
+              would compare if your enrollment needs a manual check.
+            </p>
+            <FaceCapture
+              guide="Hold your card next to your face"
+              mode="evidence"
+              onCapture={(_results, jpeg) => { setEvidenceJpeg(jpeg); setStep("matric"); }}
+            />
+          </div>
         )}
         {step === "matric" && (
           <div className="space-y-3">
@@ -243,7 +278,11 @@ function VerifyIdentity() {
           </div>
         )}
         {step === "live-capture" && (
-          <FaceCapture guide="Hold still" onCapture={(r, jpeg) => submitEnrollment(r.descriptor, jpeg, r.antispoofScore, r.livenessScore)} />
+          <FaceCapture
+            guide="Hold still — we'll capture a few frames"
+            samples={LIVE_SAMPLE_COUNT}
+            onCapture={(results) => submitEnrollment(results)}
+          />
         )}
         {step === "done" && <p className="text-center font-display font-bold text-lg">You're all set.</p>}
         {step === "rejected" && <p className="text-center text-pink">Automated verification didn't succeed. Ask your lecturer to verify you in person.</p>}

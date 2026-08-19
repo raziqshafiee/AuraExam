@@ -19,6 +19,15 @@ const CHALLENGE_STEPS: readonly string[][] = [
 ];
 const CHALLENGE_TTL_MS = 90_000;
 
+// Pure so it's cheaply unit-testable without mocking the DB. `priorRejectedCount`
+// must be the count of this user's rejected face_enrollments rows that existed
+// BEFORE the current attempt began — the "+1" accounts for the current attempt
+// itself, regardless of which exit path (recordAttempt vs. the main handler's
+// band-routing return) ultimately reports it.
+export function computeAttemptsRemaining(maxAttempts: number, priorRejectedCount: number): number {
+  return Math.max(0, maxAttempts - (priorRejectedCount + 1));
+}
+
 // POST: issue a randomized, single-use liveness challenge.
 export const faceChallenge = createServerFn({ method: "POST" }).handler(async () => {
   const supabase = createClient();
@@ -61,6 +70,18 @@ export const faceEnroll = createServerFn({ method: "POST" })
     const settings = await getFaceSettings();
     const admin = createAdminClient();
 
+    // 0. Prior rejected-attempt count for this user, queried once up front so
+    // attemptsRemaining reflects real history rather than a constant. "+1" in
+    // the formula below accounts for the current attempt, whichever exit path
+    // it takes (recordAttempt's early liveness/antispoof failure, or the main
+    // band-routing path landing on "rejected").
+    const { count: priorRejectedCountRaw } = await (admin as any)
+      .from("face_enrollments")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("status", "rejected");
+    const priorRejectedCount = priorRejectedCountRaw ?? 0;
+
     // 1. Challenge validation — unexpired, unconsumed, belongs to this user,
     // steps actually completed. Consumed immediately so it cannot be replayed.
     const { data: challenge } = await (admin as any)
@@ -82,7 +103,7 @@ export const faceEnroll = createServerFn({ method: "POST" })
       await (admin as any).from("face_challenges").update({ consumed_at: new Date().toISOString() }).eq("id", challenge.id);
 
       if (data.antispoofScore < settings.antispoofMin || data.livenessScore < settings.livenessMin) {
-        return await recordAttempt(admin, user.id, "Liveness/antispoof check failed", settings);
+        return await recordAttempt(admin, user.id, "Liveness/antispoof check failed", settings, priorRejectedCount);
       }
     }
 
@@ -199,10 +220,22 @@ export const faceEnroll = createServerFn({ method: "POST" })
       await pushNotification(supabase, { userId: user.id, type: "identity_verified", title: "Identity verified", body: "Face Match enrollment complete." });
     }
 
-    return { status, attemptsRemaining: status === "rejected" ? Math.max(0, settings.maxAttempts - 1) : settings.maxAttempts };
+    return {
+      status,
+      attemptsRemaining:
+        status === "rejected"
+          ? computeAttemptsRemaining(settings.maxAttempts, priorRejectedCount)
+          : settings.maxAttempts,
+    };
   });
 
-async function recordAttempt(admin: any, userId: string, reason: string, settings: any) {
+async function recordAttempt(
+  admin: any,
+  userId: string,
+  reason: string,
+  settings: any,
+  priorRejectedCount: number,
+) {
   await admin.from("face_enrollments").insert({
     user_id: userId,
     embedding_reference: `[${new Array(1024).fill(0).join(",")}]`, // placeholder zero-vector for a rejected-before-scoring attempt
@@ -212,5 +245,8 @@ async function recordAttempt(admin: any, userId: string, reason: string, setting
     consent_at: new Date().toISOString(),
     consent_version: "v1",
   });
-  return { status: "rejected" as const, attemptsRemaining: Math.max(0, settings.maxAttempts - 1) };
+  return {
+    status: "rejected" as const,
+    attemptsRemaining: computeAttemptsRemaining(settings.maxAttempts, priorRejectedCount),
+  };
 }
