@@ -34,6 +34,7 @@ const PRIMARY_NAV: Record<Role, NavItem[]> = {
     { to: "/lecturer/question-bank", label: "Question Bank",icon: Library },
     { to: "/lecturer/exams",         label: "Exams",        icon: FileText },
     { to: "/lecturer/appeals",       label: "Appeals",      icon: Scale, badge: "appeals" },
+    { to: "/lecturer/identity-sessions", label: "Sessions", icon: ScanFace },
   ],
   admin: [
     { to: "/admin",            label: "Dashboard", icon: LayoutDashboard },

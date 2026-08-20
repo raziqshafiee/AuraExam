@@ -534,6 +534,105 @@ export const faceBindSession = createServerFn({ method: "POST" })
     return { elevated: lobbyRow ? !lobbyRow.passed : false };
   });
 
+// ── Supervised enrollment sessions (Task 7 — lecturer windows / VIVA fallback) ──
+
+// POST: lecturer opens a time-boxed window during which students in scope
+// (a whole class, or one specific student) can enroll without a card, under
+// physical supervision. Insert goes through the SSR client (not admin) —
+// Task 1's fes_lecturer_all RLS policy (`opened_by = auth.uid()`) permits
+// this directly, so there's no need to bypass RLS here.
+export const openEnrollmentSession = createServerFn({ method: "POST" })
+  .inputValidator((data: { classId?: string; targetUserId?: string; durationMinutes?: number }) => data)
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+    if (!data.classId && !data.targetUserId) throw new Error("classId or targetUserId is required");
+
+    if (data.classId) {
+      const { data: cls } = await db(supabase).from("classes").select("lecturer_id").eq("id", data.classId).single();
+      if (cls?.lecturer_id !== user.id) throw new Error("Forbidden — you do not own this class");
+    }
+
+    const expiresAt = new Date(Date.now() + (data.durationMinutes ?? 30) * 60_000).toISOString();
+    const { data: session, error } = await db(supabase)
+      .from("face_enrollment_sessions")
+      .insert({ class_id: data.classId ?? null, target_user: data.targetUserId ?? null, opened_by: user.id, expires_at: expiresAt })
+      .select("id, expires_at")
+      .single();
+    if (error) throw new Error(error.message);
+    return { sessionId: session.id as string, expiresAt: session.expires_at as string };
+  });
+
+// POST: lecturer closes their own open window early. Scoped to opened_by so
+// a lecturer cannot close another lecturer's session even by guessing an id.
+export const closeEnrollmentSession = createServerFn({ method: "POST" })
+  .inputValidator((sessionId: string) => sessionId)
+  .handler(async ({ data: sessionId }) => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+    await db(supabase).from("face_enrollment_sessions").update({ closed_at: new Date().toISOString() }).eq("id", sessionId).eq("opened_by", user.id);
+    return { success: true as const };
+  });
+
+// GET: roster for the lecturer's "open window" screen — every student
+// enrolled in the class, and whether they currently have an active face
+// enrollment. Uses the admin client for the face_enrollments lookup since
+// that table has no client SELECT policy at all (Task 1).
+export const getEnrollmentSessionRoster = createServerFn({ method: "GET" })
+  .inputValidator((classId: string) => classId)
+  .handler(async ({ data: classId }) => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const { data: enrollments } = await db(supabase)
+      .from("class_enrollments")
+      .select("student_id, profiles!student_id(name)")
+      .eq("class_id", classId);
+
+    const admin = createAdminClient();
+    const { data: active } = await (admin as any).from("face_enrollments").select("user_id").eq("status", "active");
+    const enrolledIds = new Set((active ?? []).map((r: any) => r.user_id));
+
+    return (enrollments ?? []).map((e: any) => ({
+      studentId: e.student_id, name: e.profiles?.name ?? "Unknown", enrolled: enrolledIds.has(e.student_id),
+    }));
+  });
+
+// GET: lightweight check the student wizard runs on mount — is there an open
+// supervised window that applies to me right now? Deliberately uses the SSR
+// client (not admin): Task 1's fes_student_select RLS policy already scopes
+// visibility to `target_user = auth.uid() OR class_id IN (my enrolled
+// classes)`, so a plain RLS-scoped SELECT does the "scoped to me" filtering
+// for free — no need to duplicate that logic here or reach for the admin
+// client. Also returns the student's current matric_no so the wizard knows
+// whether it can skip straight to live-capture or must still collect it.
+export const getOpenSessionForMe = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const nowIso = new Date().toISOString();
+  const { data: session } = await db(supabase)
+    .from("face_enrollment_sessions")
+    .select("id, expires_at")
+    .is("closed_at", null)
+    .gt("expires_at", nowIso)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: profile } = await db(supabase).from("profiles").select("matric_no").eq("id", user.id).maybeSingle();
+
+  return {
+    sessionId: session?.id ?? null,
+    expiresAt: session?.expires_at ?? null,
+    matricNo: profile?.matric_no ?? null,
+  };
+});
+
 async function recordAttempt(
   admin: any,
   userId: string,

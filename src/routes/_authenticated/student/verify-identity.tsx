@@ -7,7 +7,7 @@ import { Card, PageHeader } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { FaceCapture } from "@/components/brand/face-capture";
 import { LivenessChallenge } from "@/components/brand/liveness-challenge";
-import { faceChallenge, faceEnroll } from "@/lib/supabase/face";
+import { faceChallenge, faceEnroll, getOpenSessionForMe } from "@/lib/supabase/face";
 import type { DescriptorResult } from "@/lib/face/descriptor";
 import type { ChallengeStep } from "@/lib/face/liveness";
 
@@ -86,6 +86,33 @@ function VerifyIdentity() {
   const [matricNo, setMatricNo] = useState("");
   const [challenge, setChallenge] = useState<{ challengeId: string; steps: string[] } | null>(null);
   const [attemptsRemaining, setAttemptsRemaining] = useState(3);
+
+  // ── Supervised window detection (Task 7) ──────────────────────────────
+  // On mount, check whether a lecturer has an open enrollment window that
+  // applies to this student (class-wide or targeted at them individually).
+  // If so, the card/co-presence/liveness-challenge steps are skipped
+  // entirely — physical supervision replaces card provenance and the
+  // in-person lecturer replaces the automated liveness challenge. Only the
+  // matric-number step is kept, and only if the student doesn't already
+  // have one on file.
+  const [sessionInfo, setSessionInfo] = useState<{ sessionId: string; matricNo: string | null } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getOpenSessionForMe()
+      .then((res) => {
+        if (cancelled || !res.sessionId) return;
+        setSessionInfo({ sessionId: res.sessionId, matricNo: res.matricNo });
+        if (res.matricNo) setMatricNo(res.matricNo);
+      })
+      .catch(() => {
+        // No open window (or the check failed) — fall through to the
+        // normal card-based flow, which is always the safe default.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── Liveness-step camera + FaceLandmarker, scoped to this route ──────────
   // LivenessChallenge itself never touches MediaPipe — it only calls
@@ -195,6 +222,40 @@ function VerifyIdentity() {
   }
 
   async function submitEnrollment(liveResults: DescriptorResult[]) {
+    // Supervised path (Task 7): no card, no co-presence evidence, no liveness
+    // challenge — the lecturer's open window (and their physical presence)
+    // stands in for all three. faceEnroll's isSupervised branch skips
+    // challenge validation entirely, so challengeId/challengeStepsCompleted
+    // are sent empty, and evidenceJpegBase64 empty (it's only ever read when
+    // status lands on pending/rejected, which never happens for a supervised
+    // enrollment — faceEnroll always bands it straight to "active").
+    if (sessionInfo) {
+      try {
+        const res = await faceEnroll({
+          data: {
+            embeddingCard: null,
+            embeddingSamples: liveResults.map((r) => r.descriptor),
+            matricNo,
+            challengeId: "",
+            challengeStepsCompleted: [],
+            antispoofScore: average(liveResults.map((r) => r.antispoofScore)),
+            livenessScore: average(liveResults.map((r) => r.livenessScore)),
+            evidenceJpegBase64: "",
+            sessionId: sessionInfo.sessionId,
+          },
+        });
+        if (res.status === "active") {
+          setStep("done");
+          toast.success("Identity verified");
+        } else {
+          toast.error("Supervised enrollment did not complete — please ask your lecturer to try again.");
+        }
+      } catch (err: any) {
+        toast.error(err.message ?? "Enrollment failed");
+      }
+      return;
+    }
+
     if (!cardResult || !challenge || !evidenceJpeg) return;
     try {
       const res = await faceEnroll({
@@ -232,7 +293,18 @@ function VerifyIdentity() {
         {step === "consent" && (
           <div className="space-y-4">
             <p className="text-sm">We store a numeric representation of your face, not a photograph. Your ID card image is deleted once verification completes. You may decline and ask your lecturer to verify you in person instead.</p>
-            <WakeoutButton className="w-full" onClick={() => setStep("card")}>I understand, continue</WakeoutButton>
+            <WakeoutButton
+              className="w-full"
+              onClick={() => {
+                // Supervised window open: skip card/co-presence/matric-if-known
+                // and go straight to live capture (or matric first, if the
+                // student doesn't have one on file yet).
+                if (sessionInfo) setStep(sessionInfo.matricNo ? "live-capture" : "matric");
+                else setStep("card");
+              }}
+            >
+              I understand, continue
+            </WakeoutButton>
           </div>
         )}
         {step === "card" && (
@@ -258,7 +330,9 @@ function VerifyIdentity() {
           <div className="space-y-3">
             <label className="text-xs font-mono uppercase">Matric number</label>
             <input value={matricNo} onChange={(e) => setMatricNo(e.target.value)} className="w-full border-2 border-ink rounded-xl px-3 py-2" />
-            <WakeoutButton className="w-full" onClick={startLiveness} disabled={!matricNo}>Continue</WakeoutButton>
+            {/* Supervised window: skip the automated liveness challenge too —
+                the lecturer is physically present, so go straight to live capture. */}
+            <WakeoutButton className="w-full" onClick={sessionInfo ? () => setStep("live-capture") : startLiveness} disabled={!matricNo}>Continue</WakeoutButton>
           </div>
         )}
         {step === "liveness" && challenge && (
