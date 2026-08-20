@@ -496,14 +496,24 @@ function TakeExam() {
     setSubmitting(true);
     submittingRef.current = true;
     try {
-      // Task 6: best-effort submit-time identity snapshot. Hard-capped at 8s
-      // total via withTimeout (never rejects, never hangs) so a camera/model/
-      // network hiccup here can NEVER delay or prevent the actual submitExam
-      // call directly below — that call is untouched and always fires.
+      // Task 6: best-effort submit-time identity snapshot. Deliberately NOT
+      // awaited — submitExam (right below) must fire with ZERO added latency,
+      // not just bounded latency, regardless of how fast or slow the camera/
+      // model/network happen to be. This is fired in parallel with submitExam,
+      // not before it. withTimeout still caps its own internal duration at 8s
+      // and never rejects; the trailing .catch(() => {}) is a further guard
+      // against any synchronous throw escaping the call before submitExam
+      // below has a chance to start (defense-in-depth — withTimeout's own
+      // executor cannot realistically throw synchronously, but this makes
+      // that impossible to matter either way).
       if (exam.require_identity_verification) {
-        await withTimeout(
+        withTimeout(
           (async () => {
             const human = await loadHuman();
+            // Queried lazily (only once loadHuman resolves) so a slow model
+            // load can't grab a video element that's already been unmounted
+            // by a subsequent navigation — if the exam page has since
+            // unmounted, this simply returns null and the check no-ops.
             const video = document.querySelector<HTMLVideoElement>("video");
             if (!human || !video) return;
             const r = await extractDescriptor(human, video);
@@ -520,7 +530,7 @@ function TakeExam() {
             }).catch(() => {});
           })(),
           8_000
-        );
+        ).catch(() => {});
       }
 
       await submitExam({
