@@ -7,6 +7,7 @@ import { loadHuman } from "@/lib/face/human-loader";
 import { extractDescriptor } from "@/lib/face/descriptor";
 import { passesQualityGate } from "@/lib/face/quality";
 import { faceVerify } from "@/lib/supabase/face";
+import { withTimeout } from "@/lib/face/with-timeout";
 
 // Client-side cap on quality-gate/error failures that never reach faceVerify
 // (bad camera, permanently poor lighting, thrown exceptions, permission
@@ -76,21 +77,36 @@ export function IdentityGate({
   async function runCheck() {
     setState("checking");
     try {
-      const human = await loadHuman();
+      // Every step is timeout-bounded (Global Constraint #8: fail-soft,
+      // everywhere) — mirrors the pattern in exams.$examId.take.tsx's
+      // handleIdentityTrigger/fireSubmitIdentityCheck. withTimeout never
+      // rejects; it resolves to null on a hang, thrown error, or rejection,
+      // so a null here is treated exactly like a !human/!gate.ok failure and
+      // routed through the same bounded handleClientFailure retry cap —
+      // otherwise a genuine hang would leave `state` stuck at "checking"
+      // forever and the lobby's Start button would never re-enable.
+      const human = await withTimeout(loadHuman(), 15_000);
       if (!human || !videoRef.current) {
         handleClientFailure("Camera isn't ready yet — try again.");
         return;
       }
-      const r = await extractDescriptor(human, videoRef.current);
+      const r = await withTimeout(extractDescriptor(human, videoRef.current), 10_000);
       const gate = passesQualityGate(r);
       if (!gate.ok || !r) {
         handleClientFailure(gate.reason ?? "Try again");
         return;
       }
 
-      const res = await faceVerify({
-        data: { context: "lobby", examId, embeddings: [r.descriptor], antispoofScore: r.antispoofScore, livenessScore: r.livenessScore },
-      });
+      const res = await withTimeout(
+        faceVerify({
+          data: { context: "lobby", examId, embeddings: [r.descriptor], antispoofScore: r.antispoofScore, livenessScore: r.livenessScore },
+        }),
+        10_000
+      );
+      if (!res) {
+        handleClientFailure("Something went wrong — check your camera connection and try again.");
+        return;
+      }
       if (res.passed) {
         setState("passed");
         onPassed(false);

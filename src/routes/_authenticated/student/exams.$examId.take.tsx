@@ -10,44 +10,11 @@ import { recordHeartbeat } from "@/lib/supabase/proctor";
 import { faceVerify } from "@/lib/supabase/face";
 import { loadHuman } from "@/lib/face/human-loader";
 import { extractDescriptor } from "@/lib/face/descriptor";
+import { withTimeout } from "@/lib/face/with-timeout";
 import { AUTOSAVE, ESSAY, INTEGRITY } from "@/lib/constants";
 import { Flag, Camera, ChevronLeft, ChevronRight, AlertTriangle, Maximize, X } from "lucide-react";
 import { toast } from "sonner";
 import { renderMarkdown, stripMarkdown } from "@/lib/render-text";
-
-// Resolves with `null` on timeout instead of rejecting — used to bound every
-// identity-check call (loadHuman/extractDescriptor/faceVerify) so a stalled
-// camera, model download, or network request can NEVER hang the caller.
-// Never rejects: a thrown/rejected `promise` also resolves to null. This is
-// the fail-soft primitive Task 5's review found missing (Global Constraint
-// #8) — every faceVerify call site added in Task 6 is wrapped with it.
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        resolve(null);
-      }
-    }, ms);
-    promise.then(
-      (v) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          resolve(v);
-        }
-      },
-      () => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          resolve(null);
-        }
-      }
-    );
-  });
-}
 
 // Task 6: fire-and-forget submit-time identity snapshot, shared by BOTH
 // submit paths — the "Submit exam" button (handleFinalSubmit) and the
