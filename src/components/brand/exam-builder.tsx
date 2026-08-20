@@ -275,14 +275,28 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
           <div className={`flex items-center justify-between px-4 py-3 rounded-2xl border-2 transition-colors ${requireCamera ? "border-violet bg-violet/10" : "border-ink/20 bg-background"}`}>
             <div>
               <p className="text-xs font-mono uppercase tracking-widest text-ink/60">Require camera</p>
-              <p className="text-sm font-semibold mt-0.5">{requireCamera ? "Proctoring on" : "No camera needed"}</p>
+              <p className="text-sm font-semibold mt-0.5">
+                {requireCamera ? "Proctoring on" : "No camera needed"}
+                {requireIdentityVerification && (
+                  <span className="ml-1 font-normal text-ink/50">(locked on — identity verification needs it)</span>
+                )}
+              </p>
             </div>
             <button
               type="button"
               role="switch"
               aria-checked={requireCamera}
-              onClick={() => setRequireCamera((v) => !v)}
-              className={`relative w-12 h-6 rounded-full border-2 border-ink transition-colors ${requireCamera ? "bg-violet" : "bg-muted"}`}
+              disabled={requireIdentityVerification}
+              // Identity verification implies camera requirement — the two
+              // must never end up as (camera=off, identity=on), since both
+              // the in-exam trigger and the submit-time check locate their
+              // video element via document.querySelector("video"), which
+              // only exists when CameraProctor is mounted.
+              onClick={() => {
+                if (requireIdentityVerification) return;
+                setRequireCamera((v) => !v);
+              }}
+              className={`relative w-12 h-6 rounded-full border-2 border-ink transition-colors ${requireCamera ? "bg-violet" : "bg-muted"} ${requireIdentityVerification ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white border border-ink/30 transition-all ${requireCamera ? "left-6" : "left-0.5"}`} />
             </button>
@@ -297,7 +311,15 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
               type="button"
               role="switch"
               aria-checked={requireIdentityVerification}
-              onClick={() => setRequireIdentityVerification((v) => !v)}
+              onClick={() =>
+                setRequireIdentityVerification((v) => {
+                  const next = !v;
+                  // Turning identity verification on also turns camera on —
+                  // see the camera toggle's comment for why this must hold.
+                  if (next) setRequireCamera(true);
+                  return next;
+                })
+              }
               className={`relative w-12 h-6 rounded-full border-2 border-ink transition-colors ${requireIdentityVerification ? "bg-violet" : "bg-muted"}`}
             >
               <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white border border-ink/30 transition-all ${requireIdentityVerification ? "left-6" : "left-0.5"}`} />

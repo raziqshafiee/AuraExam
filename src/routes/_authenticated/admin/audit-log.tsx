@@ -11,6 +11,7 @@ const TABS: { key: AuditCategory | "all"; label: string }[] = [
   { key: "appeal", label: "Appeals" },
   { key: "integrity", label: "Integrity" },
   { key: "class", label: "Classes" },
+  { key: "identity", label: "Identity" },
 ];
 
 const CATEGORY_STYLE: Record<AuditCategory, { bg: string; label: string }> = {
@@ -20,6 +21,7 @@ const CATEGORY_STYLE: Record<AuditCategory, { bg: string; label: string }> = {
   integrity:       { bg: "bg-pink", label: "Integrity" },
   class:           { bg: "bg-amber", label: "Class" },
   general:         { bg: "bg-muted", label: "General" },
+  identity:        { bg: "bg-sky text-sky-foreground", label: "Identity" },
 };
 
 export const Route = createFileRoute("/_authenticated/admin/audit-log")({

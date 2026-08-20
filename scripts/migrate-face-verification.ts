@@ -245,31 +245,37 @@ async function migrate() {
   // an authorization-checked server function (Task 4/6).
   console.log("OK  identity-evidence bucket created (private, service-role only)");
 
-  // 10. Nightly retention purge via pg_cron (already installed + active on
-  //     this project — see 'exam-status-sync'). Deletes face_verifications /
-  //     face_enrollments evidence_path rows older than the retention window
-  //     by marking them for the app-level purge server function to sweep
-  //     (actual storage object deletion needs the Supabase Storage API, which
-  //     SQL cannot call directly — see facePurge in Task 4).
+  // 10. Final-review Finding 8: this pg_cron job was found to RACE with
+  //     facePurge (the admin server function in src/lib/supabase/face.ts).
+  //     The job nulled face_verifications.evidence_path directly via SQL,
+  //     but facePurge filters .not("evidence_path", "is", null) to find rows
+  //     whose storage object it still needs to delete. If the cron job nulled
+  //     the column first, the storage path was lost forever and the JPEG
+  //     became a permanently orphaned object in the private bucket — a real
+  //     retention/PDPA correctness bug for biometric evidence.
+  //
+  //     Fix: remove this SQL-only job entirely and let facePurge own the
+  //     whole sweep — it already correctly deletes the storage object THEN
+  //     nulls the column, atomically per-row, for BOTH face_enrollments and
+  //     face_verifications. Two independent, uncoordinated purge mechanisms
+  //     touching the same column was the actual root cause, not a timing
+  //     tweak. facePurge is a proper admin-gated server function; it can be
+  //     triggered manually or wired to a real scheduled trigger later
+  //     (mirroring the syncExamStatuses fallback pattern already used for
+  //     exam lifecycle) — it does NOT need pg_cron.
+  //
+  //     This unschedule call actively removes the job from cron.job in the
+  //     live database if Task 1's original run already scheduled it there —
+  //     merely not re-scheduling it here would leave a stale prior run
+  //     active. Do NOT re-add a cron.schedule(...) call for this job.
   try {
     await pool.query(`CREATE EXTENSION IF NOT EXISTS pg_cron;`);
     await pool.query(`
       SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = 'face-evidence-purge-mark';
     `).catch(() => {});
-    await pool.query(`
-      SELECT cron.schedule(
-        'face-evidence-purge-mark',
-        '0 3 * * *',
-        $$ UPDATE face_verifications SET evidence_path = NULL
-           WHERE evidence_path IS NOT NULL
-             AND created_at < now() - (
-               SELECT value FROM platform_settings WHERE key = 'face_evidence_retention_days'
-             ) * interval '1 day'; $$
-      );
-    `);
-    console.log("OK  pg_cron job 'face-evidence-purge-mark' scheduled (03:00 daily)");
+    console.log("OK  pg_cron job 'face-evidence-purge-mark' unscheduled (facePurge now owns the whole sweep)");
   } catch (e: any) {
-    console.warn(`!!  pg_cron scheduling skipped (${e?.message ?? e}) — evidence_path nulling can be run manually.`);
+    console.warn(`!!  pg_cron unschedule skipped (${e?.message ?? e}) — check cron.job manually if pg_cron is enabled.`);
   }
 
   // 11. pgvector duplicate-scan helper — SQL function so the 1:N cosine-distance

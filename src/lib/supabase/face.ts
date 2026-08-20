@@ -91,6 +91,12 @@ export const faceEnroll = createServerFn({ method: "POST" })
       .maybeSingle();
 
     const isSupervised = !!data.sessionId;
+    // Set inside the supervised-window validation below (section 2) so the
+    // audit trail and supervised_by column record who actually authorized
+    // the card-bypass — the lecturer who opened the window (session.opened_by)
+    // — never the student's own id.
+    let supervisorId: string | null = null;
+
     if (!isSupervised) {
       if (!challenge || challenge.user_id !== user.id || challenge.consumed_at) {
         throw new Error("Invalid or already-used challenge");
@@ -101,10 +107,15 @@ export const faceEnroll = createServerFn({ method: "POST" })
       const allStepsDone = (challenge.steps as string[]).every((s) => data.challengeStepsCompleted.includes(s));
       if (!allStepsDone) throw new Error("Liveness challenge was not completed");
       await (admin as any).from("face_challenges").update({ consumed_at: new Date().toISOString() }).eq("id", challenge.id);
+    }
 
-      if (data.antispoofScore < settings.antispoofMin || data.livenessScore < settings.livenessMin) {
-        return await recordAttempt(admin, user.id, "Liveness/antispoof check failed", settings, priorRejectedCount);
-      }
+    // Antispoof/liveness enforced UNCONDITIONALLY — the physical-presence
+    // assumption of a supervised window doesn't eliminate the value of
+    // confirming a live, non-spoofed face was actually presented (and the
+    // liveness challenge itself is skipped entirely for supervised
+    // enrollments, so this is the only spoof defense left on that path).
+    if (data.antispoofScore < settings.antispoofMin || data.livenessScore < settings.livenessMin) {
+      return await recordAttempt(admin, user.id, "Liveness/antispoof check failed", settings, priorRejectedCount);
     }
 
     // 2. Supervised-window validation, if this is a supervised enrollment
@@ -112,7 +123,7 @@ export const faceEnroll = createServerFn({ method: "POST" })
     if (isSupervised) {
       const { data: session } = await (admin as any)
         .from("face_enrollment_sessions")
-        .select("id, class_id, target_user, expires_at, closed_at")
+        .select("id, class_id, target_user, expires_at, closed_at, opened_by")
         .eq("id", data.sessionId)
         .maybeSingle();
       const now = new Date();
@@ -127,6 +138,7 @@ export const faceEnroll = createServerFn({ method: "POST" })
             .eq("student_id", user.id)
             .maybeSingle()).data);
       if (!windowOpen || !scopedToMe) throw new Error("No open supervised verification window applies to you");
+      supervisorId = session.opened_by ?? null;
     }
 
     // 3. Duplicate scan — this reference embedding vs every OTHER active
@@ -168,10 +180,24 @@ export const faceEnroll = createServerFn({ method: "POST" })
       cardLiveScore = cosine(l2normalize(data.embeddingCard), meanRef);
     }
 
-    // 5. Band-route
+    // 5. Band-route.
+    //
+    // SUSPICIOUS_CARD_LIVE_SCORE guards against the "card" step being an
+    // ordinary face capture with nothing card-related actually checked: a
+    // student who shows their own face for BOTH the "card" step and the
+    // "live" step gets cardLiveScore ≈ 1.0 (comparing a face to itself). A
+    // real ID card photo (printed, laminated, glare-prone, possibly
+    // outdated) should essentially never score near-perfect against a live
+    // capture of the same person — a score this high is itself the signal
+    // something's off, most likely that the "card" step also just captured
+    // a live face. Route it to pending for human review instead of
+    // auto-approving, even though it would otherwise clear autoApproveThreshold.
+    const SUSPICIOUS_CARD_LIVE_SCORE = 0.98;
     let status: "active" | "pending" | "rejected";
     if (isSupervised) {
       status = "active";
+    } else if (cardLiveScore! >= SUSPICIOUS_CARD_LIVE_SCORE) {
+      status = "pending";
     } else if (cardLiveScore! >= settings.autoApproveThreshold) {
       status = "active";
     } else if (cardLiveScore! >= settings.reviewThreshold) {
@@ -180,9 +206,17 @@ export const faceEnroll = createServerFn({ method: "POST" })
       status = "rejected";
     }
 
-    // 6. Evidence upload (co-presence frame) — only kept if status is pending or rejected
+    // 6. Evidence upload (co-presence frame). Retained for the normal
+    // retention window regardless of outcome — not only for pending/rejected
+    // — so there's always something for an admin or appeal process to check,
+    // even for auto-approved enrollments (this is what would have caught a
+    // same-face-twice spoof that otherwise sails straight to "active" with
+    // no evidence left behind). Only applies to the non-supervised (card)
+    // path — evidenceJpegBase64 is sent empty for supervised enrollments
+    // since no card step ever ran. The existing facePurge sweep still cleans
+    // this up after settings.evidenceRetentionDays regardless of status.
     let evidencePath: string | null = null;
-    if (status === "pending" || status === "rejected") {
+    if (!isSupervised && data.evidenceJpegBase64) {
       evidencePath = `${user.id}/enrollment/${Date.now()}.jpg`;
       const bytes = Uint8Array.from(atob(data.evidenceJpegBase64), (c) => c.charCodeAt(0));
       await (admin as any).storage.from("identity-evidence").upload(evidencePath, bytes, { contentType: "image/jpeg" });
@@ -204,7 +238,10 @@ export const faceEnroll = createServerFn({ method: "POST" })
       liveness_score: data.livenessScore,
       status,
       session_id: data.sessionId ?? null,
-      supervised_by: isSupervised ? user.id : null,
+      // The lecturer who opened the window (fetched above), NOT the
+      // student's own id — this is the one audit trail that should record
+      // who authorized the card-bypass.
+      supervised_by: isSupervised ? supervisorId : null,
       consent_at: new Date().toISOString(),
       consent_version: "v1",
       evidence_path: evidencePath,
@@ -218,6 +255,18 @@ export const faceEnroll = createServerFn({ method: "POST" })
 
     if (status === "active") {
       await pushNotification(supabase, { userId: user.id, type: "identity_verified", title: "Identity verified", body: "Face Match enrollment complete." });
+    }
+
+    // Highest-trust action in the whole feature — a lecturer authorized
+    // skipping the card entirely. Always audit-logged, regardless of
+    // band-routing outcome, since it's the physical supervision itself
+    // (not the resulting score) that's the trust event being recorded.
+    if (isSupervised) {
+      await writeAudit(user.id, {
+        action: "Supervised face enrollment",
+        target: `lecturer ${supervisorId ?? "unknown"} (session ${data.sessionId})`,
+        category: "identity",
+      });
     }
 
     return {
@@ -453,7 +502,7 @@ export const faceVerify = createServerFn({ method: "POST" })
 
     if (!enrollment) {
       await notifyIdentityUnverified(supabase, admin, user.id, data.examId);
-      return { passed: false, similarity: 0, attemptsRemaining: 0, elevated: true, guidance: "No active enrollment — verify your identity from your dashboard first." };
+      return { passed: false, similarity: 0, attemptsRemaining: 0, elevated: true, guidance: "No active enrollment — open \"Face Match\" from the nav menu to enroll first." };
     }
 
     const refs = [parseVector(enrollment.embedding_reference), ...(enrollment.embedding_samples ?? []).map(parseVector)];
@@ -497,7 +546,25 @@ export const faceVerify = createServerFn({ method: "POST" })
 
     const elevated = !passed;
     if (!passed && (data.context !== "lobby" || attemptsRemaining === 0)) {
-      await notifyIdentityUnverified(supabase, admin, user.id, data.examId);
+      // Dedupe: fire the lecturer+student notification at most once per
+      // submission per context. Without this, a proctor-triggered in_exam
+      // re-check (even with camera-proctor.tsx's cooldown) can still fail
+      // repeatedly across a long exam and spam duplicate notifications. The
+      // row for THIS attempt was already inserted above, so a count of 1
+      // means this is the first failure for this submission+context.
+      let alreadyNotified = false;
+      if (data.submissionId) {
+        const { count: priorFailedCount } = await (admin as any)
+          .from("face_verifications")
+          .select("id", { count: "exact", head: true })
+          .eq("submission_id", data.submissionId)
+          .eq("context", data.context)
+          .eq("passed", false);
+        alreadyNotified = (priorFailedCount ?? 0) > 1;
+      }
+      if (!alreadyNotified) {
+        await notifyIdentityUnverified(supabase, admin, user.id, data.examId);
+      }
     }
 
     return {

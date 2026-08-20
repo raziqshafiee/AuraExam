@@ -24,6 +24,11 @@ const GAZE_GRACE_MS = 5_000;
 const FACE_COOLDOWN_MS = 30_000;
 const MULTIPLE_FACE_COOLDOWN_MS = 60_000;
 const GAZE_COOLDOWN_MS = 30_000;
+// Identity re-check trigger: with normal head movement / imperfect lighting,
+// 0->1 or >1->1 face-count transitions can happen every couple of seconds.
+// Without a cooldown this fires onIdentityTrigger (and downstream writes a
+// face_verifications row + notifications) far too often across a long exam.
+const IDENTITY_TRIGGER_COOLDOWN_MS = 45_000;
 
 interface Props {
   /** setup = lobby camera check (manual start, large preview)
@@ -96,6 +101,7 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag, onIdent
     lastMultipleReport: 0,
     lastGazeReport: 0,
     lastHeadTurnReport: 0,
+    lastIdentityTrigger: 0,
     // -1 = "no reading yet" sentinel so the very first detection tick never
     // looks like a resolution edge.
     prevFaceCount: -1,
@@ -122,8 +128,16 @@ export function CameraProctor({ mode, onReady, submissionId, onHardFlag, onIdent
     // A single, present face just returned after being missing (0) or after
     // multiple faces were detected (>1) — the physical moment a proxy swap
     // could have occurred. Fire-and-forget from the caller's perspective; this
-    // component never awaits or depends on the result.
-    if (faceCount === 1 && (prevFaceCount === 0 || prevFaceCount > 1)) {
+    // component never awaits or depends on the result. Cooldown matches the
+    // pattern used by every other signal in this function (lastMultipleReport
+    // etc.) — without it, normal head movement in imperfect lighting can
+    // flap the face count every couple of seconds across a 90-minute exam.
+    if (
+      faceCount === 1 &&
+      (prevFaceCount === 0 || prevFaceCount > 1) &&
+      now - p.lastIdentityTrigger >= IDENTITY_TRIGGER_COOLDOWN_MS
+    ) {
+      p.lastIdentityTrigger = now;
       onIdentityTriggerRef.current?.("single-face-restored");
     }
     p.prevFaceCount = faceCount;

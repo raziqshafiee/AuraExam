@@ -399,6 +399,14 @@ export const createExam = createServerFn({ method: "POST" })
     } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
+    // Identity verification implies camera requirement — these two flags must
+    // never end up as (camera=off, identity=on) in the database, because
+    // both the in-exam trigger and the submit-time check locate their video
+    // element via document.querySelector("video"), which only exists when
+    // CameraProctor is mounted (i.e. require_camera is true). Enforced here
+    // server-side rather than relying solely on the exam-builder UI.
+    const requireCamera = data.require_camera || data.require_identity_verification;
+
     const { data: exam, error } = await db(supabase)
       .from("exams")
       .insert({
@@ -407,7 +415,7 @@ export const createExam = createServerFn({ method: "POST" })
         start_time: data.start_time,
         end_time: data.end_time,
         duration: data.duration,
-        require_camera: data.require_camera,
+        require_camera: requireCamera,
         require_identity_verification: data.require_identity_verification,
         shuffle: data.shuffle,
         status: data.status,
@@ -462,6 +470,10 @@ export const updateExam = createServerFn({ method: "POST" })
       );
     }
 
+    // Identity verification implies camera requirement — see createExam for
+    // why this must be enforced server-side (not just in the exam-builder UI).
+    const requireCamera = data.require_camera || data.require_identity_verification;
+
     if (current?.status === "upcoming") {
       // Once published, only cosmetic fields may change. Questions, schedule,
       // duration, and class are committed — students are already expecting them.
@@ -469,7 +481,7 @@ export const updateExam = createServerFn({ method: "POST" })
       // toggle pre-start.
       const { error } = await db(supabase)
         .from("exams")
-        .update({ title: data.title, require_camera: data.require_camera, require_identity_verification: data.require_identity_verification, shuffle: data.shuffle })
+        .update({ title: data.title, require_camera: requireCamera, require_identity_verification: data.require_identity_verification, shuffle: data.shuffle })
         .eq("id", data.id);
       if (error) throw new Error(error.message);
       return { id: data.id as string };
@@ -484,7 +496,7 @@ export const updateExam = createServerFn({ method: "POST" })
         start_time: data.start_time,
         end_time: data.end_time,
         duration: data.duration,
-        require_camera: data.require_camera,
+        require_camera: requireCamera,
         require_identity_verification: data.require_identity_verification,
         shuffle: data.shuffle,
         status: data.status,

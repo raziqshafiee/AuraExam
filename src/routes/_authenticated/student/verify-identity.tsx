@@ -292,7 +292,7 @@ function VerifyIdentity() {
       <Card className="max-w-xl mx-auto space-y-6">
         {step === "consent" && (
           <div className="space-y-4">
-            <p className="text-sm">We store a numeric representation of your face, not a photograph. Your ID card image is deleted once verification completes. You may decline and ask your lecturer to verify you in person instead.</p>
+            <p className="text-sm">We store a numeric representation of your face — not a photograph — for as long as your enrollment is active. A photo of your card held next to your face is also kept, but only for a limited retention period, then automatically deleted. No ID card image on its own is ever stored. You may decline and ask your lecturer to verify you in person instead.</p>
             <WakeoutButton
               className="w-full"
               onClick={() => {
