@@ -554,6 +554,37 @@ export const openEnrollmentSession = createServerFn({ method: "POST" })
       if (cls?.lecturer_id !== user.id) throw new Error("Forbidden — you do not own this class");
     }
 
+    // Ownership check for the single-student targeting path too — without
+    // this, any lecturer could open a card-skipping supervised window for an
+    // arbitrary user by calling this function directly with only
+    // targetUserId (unreachable through the shipped identity-sessions.tsx
+    // UI, which only ever sends classId, but the server function's interface
+    // documents targetUserId as a first-class standalone option, and
+    // faceEnroll's own re-validation just honors whatever target_user ends
+    // up stored here — nothing downstream catches this). Mirrors the classId
+    // branch's intent: the target student must be enrolled in at least one
+    // class this lecturer teaches. Two-step query (not a nested embed
+    // filter) to match this codebase's existing manual-join style — see
+    // getFaceReviewQueue's comment on why embedded-select filters aren't
+    // relied on here.
+    if (data.targetUserId) {
+      const { data: targetEnrollments } = await db(supabase)
+        .from("class_enrollments")
+        .select("class_id")
+        .eq("student_id", data.targetUserId);
+      const classIds = (targetEnrollments ?? []).map((e: any) => e.class_id);
+      let ownsAny = false;
+      if (classIds.length > 0) {
+        const { data: ownedClasses } = await db(supabase)
+          .from("classes")
+          .select("id")
+          .in("id", classIds)
+          .eq("lecturer_id", user.id);
+        ownsAny = (ownedClasses ?? []).length > 0;
+      }
+      if (!ownsAny) throw new Error("Forbidden — this student is not enrolled in any of your classes");
+    }
+
     const expiresAt = new Date(Date.now() + (data.durationMinutes ?? 30) * 60_000).toISOString();
     const { data: session, error } = await db(supabase)
       .from("face_enrollment_sessions")
