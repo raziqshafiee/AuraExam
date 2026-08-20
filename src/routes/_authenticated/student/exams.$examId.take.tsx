@@ -49,6 +49,52 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   });
 }
 
+// Task 6: fire-and-forget submit-time identity snapshot, shared by BOTH
+// submit paths — the "Submit exam" button (handleFinalSubmit) and the
+// timer/buzzer auto-submit (triggerTimerSubmit) — so every submission on an
+// identity-required exam gets a submit-context face_verifications row, not
+// just manually-submitted ones. Callers must NOT `await` this: it is invoked
+// and left running in the background so it can never add latency to the
+// actual submitExam call at either call site.
+//
+// Every async step is individually timeout-wrapped (loadHuman: 15s,
+// extractDescriptor: 10s) — mirroring the exact pattern used in
+// handleIdentityTrigger below — rather than relying solely on the outer
+// withTimeout(..., 8_000). withTimeout can't actually abort/cancel the
+// promise it races (no AbortController wired through loadHuman/
+// extractDescriptor), so a genuinely hung call still runs to completion
+// on its own regardless of any wrapper; individually wrapping each step
+// keeps this function's own internal progression bounded and consistent
+// with the in-exam path rather than being one large opaque awaited block.
+// The outer withTimeout(..., 8_000) remains as a belt-and-braces cap on the
+// whole sequence.
+function fireSubmitIdentityCheck(examId: string, submissionId: string) {
+  withTimeout(
+    (async () => {
+      const human = await withTimeout(loadHuman(), 15_000);
+      // Queried lazily (only once loadHuman resolves) so a slow model load
+      // can't grab a video element that's already been unmounted by a
+      // subsequent navigation — if the exam page has since unmounted, this
+      // simply returns null and the check no-ops.
+      const video = document.querySelector<HTMLVideoElement>("video");
+      if (!human || !video) return;
+      const r = await withTimeout(extractDescriptor(human, video), 10_000);
+      if (!r || r.faceCount !== 1) return;
+      await faceVerify({
+        data: {
+          context: "submit",
+          examId,
+          submissionId,
+          embeddings: [r.descriptor],
+          antispoofScore: r.antispoofScore,
+          livenessScore: r.livenessScore,
+        },
+      }).catch(() => {});
+    })(),
+    8_000
+  ).catch(() => {});
+}
+
 export const Route = createFileRoute(
   "/_authenticated/student/exams/$examId/take"
 )({
@@ -138,6 +184,11 @@ function TakeExam() {
   const submissionIdRef = useRef(submission?.id ?? "");
   const examIdRef = useRef(exam.id);
   const storageKeyRef = useRef(storageKey);
+  // Task 6: lets triggerTimerSubmit (defined inside a mount-only effect, so
+  // it only has ref-based access to closure values) know whether to fire the
+  // submit-time identity check, mirroring the ref pattern already used for
+  // examIdRef/storageKeyRef above — this value doesn't change after load.
+  const requireIdentityVerificationRef = useRef(exam.require_identity_verification);
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   // Set to true once the student navigates to submit/result — prevents stray
@@ -208,6 +259,14 @@ function TakeExam() {
     async function triggerTimerSubmit() {
       if (!submissionIdRef.current || submittingRef.current) return;
       submittingRef.current = true;
+      // Task 6: fire-and-forget — NOT awaited, so the timer-driven auto-submit
+      // below remains exactly as fast and unconditional as it was before this
+      // task. Ensures a student who lets the timer expire (rather than
+      // clicking "Submit exam") still gets a submit-context identity anchor
+      // on an identity-required exam.
+      if (requireIdentityVerificationRef.current) {
+        fireSubmitIdentityCheck(examIdRef.current, submissionIdRef.current);
+      }
       try {
         await submitExam({
           data: {
@@ -499,38 +558,12 @@ function TakeExam() {
       // Task 6: best-effort submit-time identity snapshot. Deliberately NOT
       // awaited — submitExam (right below) must fire with ZERO added latency,
       // not just bounded latency, regardless of how fast or slow the camera/
-      // model/network happen to be. This is fired in parallel with submitExam,
-      // not before it. withTimeout still caps its own internal duration at 8s
-      // and never rejects; the trailing .catch(() => {}) is a further guard
-      // against any synchronous throw escaping the call before submitExam
-      // below has a chance to start (defense-in-depth — withTimeout's own
-      // executor cannot realistically throw synchronously, but this makes
-      // that impossible to matter either way).
+      // model/network happen to be. fireSubmitIdentityCheck is fired here and
+      // left running in the background, in parallel with submitExam, not
+      // before it — see the shared helper above for the individual per-step
+      // timeout wrapping and the outer belt-and-braces cap.
       if (exam.require_identity_verification) {
-        withTimeout(
-          (async () => {
-            const human = await loadHuman();
-            // Queried lazily (only once loadHuman resolves) so a slow model
-            // load can't grab a video element that's already been unmounted
-            // by a subsequent navigation — if the exam page has since
-            // unmounted, this simply returns null and the check no-ops.
-            const video = document.querySelector<HTMLVideoElement>("video");
-            if (!human || !video) return;
-            const r = await extractDescriptor(human, video);
-            if (!r || r.faceCount !== 1) return;
-            await faceVerify({
-              data: {
-                context: "submit",
-                examId: exam.id,
-                submissionId: submission.id,
-                embeddings: [r.descriptor],
-                antispoofScore: r.antispoofScore,
-                livenessScore: r.livenessScore,
-              },
-            }).catch(() => {});
-          })(),
-          8_000
-        ).catch(() => {});
+        fireSubmitIdentityCheck(exam.id, submission.id);
       }
 
       await submitExam({
