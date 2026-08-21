@@ -7,64 +7,12 @@ import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
 import { getExamForTaking, recordFlag, saveExamProgress, submitExam } from "@/lib/supabase/exams";
 import { recordHeartbeat } from "@/lib/supabase/proctor";
-import { faceVerify } from "@/lib/supabase/face";
-import { loadHuman } from "@/lib/face/human-loader";
-import { extractDescriptor } from "@/lib/face/descriptor";
-import { withTimeout } from "@/lib/face/with-timeout";
 import { AUTOSAVE, ESSAY, INTEGRITY } from "@/lib/constants";
 import { Flag, Camera, ChevronLeft, ChevronRight, AlertTriangle, Maximize, X } from "lucide-react";
 import { toast } from "sonner";
 import { renderMarkdown, stripMarkdown } from "@/lib/render-text";
 
-// Task 6: fire-and-forget submit-time identity snapshot, shared by BOTH
-// submit paths — the "Submit exam" button (handleFinalSubmit) and the
-// timer/buzzer auto-submit (triggerTimerSubmit) — so every submission on an
-// identity-required exam gets a submit-context face_verifications row, not
-// just manually-submitted ones. Callers must NOT `await` this: it is invoked
-// and left running in the background so it can never add latency to the
-// actual submitExam call at either call site.
-//
-// Every async step is individually timeout-wrapped (loadHuman: 15s,
-// extractDescriptor: 10s) — mirroring the exact pattern used in
-// handleIdentityTrigger below — rather than relying solely on the outer
-// withTimeout(..., 8_000). withTimeout can't actually abort/cancel the
-// promise it races (no AbortController wired through loadHuman/
-// extractDescriptor), so a genuinely hung call still runs to completion
-// on its own regardless of any wrapper; individually wrapping each step
-// keeps this function's own internal progression bounded and consistent
-// with the in-exam path rather than being one large opaque awaited block.
-// The outer withTimeout(..., 8_000) remains as a belt-and-braces cap on the
-// whole sequence.
-function fireSubmitIdentityCheck(examId: string, submissionId: string) {
-  withTimeout(
-    (async () => {
-      const human = await withTimeout(loadHuman(), 15_000);
-      // Queried lazily (only once loadHuman resolves) so a slow model load
-      // can't grab a video element that's already been unmounted by a
-      // subsequent navigation — if the exam page has since unmounted, this
-      // simply returns null and the check no-ops.
-      const video = document.querySelector<HTMLVideoElement>("video");
-      if (!human || !video) return;
-      const r = await withTimeout(extractDescriptor(human, video), 10_000);
-      if (!r || r.faceCount !== 1) return;
-      await faceVerify({
-        data: {
-          context: "submit",
-          examId,
-          submissionId,
-          embeddings: [r.descriptor],
-          antispoofScore: r.antispoofScore,
-          livenessScore: r.livenessScore,
-        },
-      }).catch(() => {});
-    })(),
-    8_000
-  ).catch(() => {});
-}
-
-export const Route = createFileRoute(
-  "/_authenticated/student/exams/$examId/take"
-)({
+export const Route = createFileRoute("/_authenticated/student/exams/$examId/take")({
   head: () => ({ meta: [{ title: "Taking exam — Aura" }] }),
   loader: ({ params }) => getExamForTaking({ data: params.examId }),
   component: TakeExam,
@@ -77,8 +25,7 @@ function formatTime(seconds: number) {
 }
 
 function TakeExam() {
-  const { exam, submission, questions, remainingSeconds, deadline } =
-    Route.useLoaderData();
+  const { exam, submission, questions, remainingSeconds, deadline } = Route.useLoaderData();
   const navigate = useNavigate();
 
   const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -89,7 +36,8 @@ function TakeExam() {
           <div className="text-5xl mb-4">🖥️</div>
           <h1 className="text-2xl font-black mb-3">Desktop Only</h1>
           <p className="text-gray-700 font-medium">
-            Exams must be taken on a desktop or laptop computer. Please switch to a PC or Mac to continue.
+            Exams must be taken on a desktop or laptop computer. Please switch to a PC or Mac to
+            continue.
           </p>
         </div>
       </div>
@@ -103,19 +51,27 @@ function TakeExam() {
   const storageKey = `aura-exam-${submission?.id ?? exam.id}`;
 
   const [idx, setIdx] = useState(() => {
-    try { return Number(sessionStorage.getItem(`${storageKey}-idx`) ?? 0); } catch { return 0; }
+    try {
+      return Number(sessionStorage.getItem(`${storageKey}-idx`) ?? 0);
+    } catch {
+      return 0;
+    }
   });
   const [answers, setAnswers] = useState<Record<string, string>>(() => {
     try {
       const s = sessionStorage.getItem(storageKey);
       return s ? JSON.parse(s) : {};
-    } catch { return {}; }
+    } catch {
+      return {};
+    }
   });
   const [flagged, setFlagged] = useState<Set<string>>(() => {
     try {
       const s = sessionStorage.getItem(`${storageKey}-flagged`);
       return s ? new Set(JSON.parse(s)) : new Set();
-    } catch { return new Set(); }
+    } catch {
+      return new Set();
+    }
   });
   // Seed from the deadline ISO string so we account for the SSR→client
   // hydration delay rather than using the pre-computed server integer directly.
@@ -151,11 +107,6 @@ function TakeExam() {
   const submissionIdRef = useRef(submission?.id ?? "");
   const examIdRef = useRef(exam.id);
   const storageKeyRef = useRef(storageKey);
-  // Task 6: lets triggerTimerSubmit (defined inside a mount-only effect, so
-  // it only has ref-based access to closure values) know whether to fire the
-  // submit-time identity check, mirroring the ref pattern already used for
-  // examIdRef/storageKeyRef above — this value doesn't change after load.
-  const requireIdentityVerificationRef = useRef(exam.require_identity_verification);
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   // Set to true once the student navigates to submit/result — prevents stray
@@ -167,17 +118,22 @@ function TakeExam() {
   // onHardFlag to silently drop flags during the remount window.
   const sendFlagRef = useRef<(type: string, label: string) => void>(() => {});
 
-  // Task 6: in-exam identity re-checks. Advisory only — never counted toward
-  // the 3-strike auto-submit (see handleIdentityTrigger below). Guards against
-  // overlapping checks if CameraProctor fires the trigger again before a prior
-  // check has resolved.
-  const consecutiveMismatchRef = useRef(0);
-  const identityCheckInFlightRef = useRef(false);
-
   // Persist ephemeral exam state so navigating to confirm + back restores it.
-  useEffect(() => { try { sessionStorage.setItem(storageKey, JSON.stringify(answers)); } catch {} }, [answers]);
-  useEffect(() => { try { sessionStorage.setItem(`${storageKey}-flagged`, JSON.stringify([...flagged])); } catch {} }, [flagged]);
-  useEffect(() => { try { sessionStorage.setItem(`${storageKey}-idx`, String(idx)); } catch {} }, [idx]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify(answers));
+    } catch {}
+  }, [answers]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(`${storageKey}-flagged`, JSON.stringify([...flagged]));
+    } catch {}
+  }, [flagged]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(`${storageKey}-idx`, String(idx));
+    } catch {}
+  }, [idx]);
 
   // Server autosave — pushes the latest answers to the server so a timeout,
   // tab-close, or crash no longer wipes the attempt. Single-inflight guard
@@ -189,14 +145,19 @@ function TakeExam() {
     savingRef.current = true;
     try {
       await saveExamProgress({ data: { submissionId: sid, answers: answersRef.current } });
-    } catch { /* best-effort; next tick retries */ }
-    finally { savingRef.current = false; }
+    } catch {
+      /* best-effort; next tick retries */
+    } finally {
+      savingRef.current = false;
+    }
   }, []);
 
   // Debounced autosave on each answer change.
   useEffect(() => {
     if (!submissionIdRef.current) return;
-    const t = setTimeout(() => { flushSave(); }, AUTOSAVE.DEBOUNCE_MS);
+    const t = setTimeout(() => {
+      flushSave();
+    }, AUTOSAVE.DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [answers, flushSave]);
 
@@ -204,9 +165,13 @@ function TakeExam() {
   // interval in case the debounce never settles during steady typing.
   useEffect(() => {
     if (!submissionIdRef.current) return;
-    const onHide = () => { if (document.visibilityState === "hidden") flushSave(); };
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flushSave();
+    };
     document.addEventListener("visibilitychange", onHide);
-    const iv = setInterval(() => { flushSave(); }, AUTOSAVE.INTERVAL_MS);
+    const iv = setInterval(() => {
+      flushSave();
+    }, AUTOSAVE.INTERVAL_MS);
     return () => {
       document.removeEventListener("visibilitychange", onHide);
       clearInterval(iv);
@@ -226,14 +191,6 @@ function TakeExam() {
     async function triggerTimerSubmit() {
       if (!submissionIdRef.current || submittingRef.current) return;
       submittingRef.current = true;
-      // Task 6: fire-and-forget — NOT awaited, so the timer-driven auto-submit
-      // below remains exactly as fast and unconditional as it was before this
-      // task. Ensures a student who lets the timer expire (rather than
-      // clicking "Submit exam") still gets a submit-context identity anchor
-      // on an identity-required exam.
-      if (requireIdentityVerificationRef.current) {
-        fireSubmitIdentityCheck(examIdRef.current, submissionIdRef.current);
-      }
       try {
         await submitExam({
           data: {
@@ -242,7 +199,9 @@ function TakeExam() {
             answers: answersRef.current,
           },
         });
-      } catch { /* server force-finalizes on close as the backstop */ }
+      } catch {
+        /* server force-finalizes on close as the backstop */
+      }
       try {
         sessionStorage.removeItem(storageKeyRef.current);
         sessionStorage.removeItem(`${storageKeyRef.current}-flagged`);
@@ -295,7 +254,9 @@ function TakeExam() {
       if (busy || !submissionIdRef.current || submittingRef.current) return;
       busy = true;
       try {
-        const result = await recordFlag({ data: { submissionId: submissionIdRef.current, type, label } });
+        const result = await recordFlag({
+          data: { submissionId: submissionIdRef.current, type, label },
+        });
         setIntegrityFlags(result.flags);
         setLastFlagType(type);
         if (result.autoSubmitted) {
@@ -313,8 +274,11 @@ function TakeExam() {
             params: { examId: examIdRef.current },
           });
         }
-      } catch { /* ignore transient errors */ }
-      finally { busy = false; }
+      } catch {
+        /* ignore transient errors */
+      } finally {
+        busy = false;
+      }
     }
 
     // Wire sendFlag into the ref so CameraProctor's onHardFlag can call it.
@@ -327,7 +291,9 @@ function TakeExam() {
     // re-request fullscreen silently if one fires during that window.
     let fullscreenConfirmed = !!document.fullscreenElement;
     let entryGrace = true;
-    const graceTimer = setTimeout(() => { entryGrace = false; }, 1000);
+    const graceTimer = setTimeout(() => {
+      entryGrace = false;
+    }, 1000);
 
     const onFullscreenChange = () => {
       if (document.fullscreenElement) {
@@ -349,13 +315,19 @@ function TakeExam() {
     const onPaste = () => sendFlag("paste", "Paste attempt detected");
     // Right-click is advisory — it blocks the context menu but does NOT count
     // toward the 3-strike limit (accessibility use-cases like spellcheck).
-    const onCtxMenu = (e: MouseEvent) => { e.preventDefault(); };
+    const onCtxMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
 
     // Wipe whatever a PrintScreen capture just placed on the clipboard. The
     // browser can't stop the OS capture, but overwriting the clipboard
     // neutralises the common "PrtScn -> paste into chat" workflow.
     const clearClipboard = () => {
-      try { navigator.clipboard?.writeText(""); } catch { /* clipboard may be blocked */ }
+      try {
+        navigator.clipboard?.writeText("");
+      } catch {
+        /* clipboard may be blocked */
+      }
     };
 
     // PrintScreen fires both keydown and keyup — dedupe so one capture = one flag.
@@ -425,53 +397,6 @@ function TakeExam() {
     };
   }, []);
 
-  // Task 6: fired by CameraProctor's onIdentityTrigger whenever a single,
-  // present face just returned after being missing or after multiple faces
-  // were detected — the physical moment a proxy swap could have occurred.
-  // Every step (model load, descriptor extraction, network call) is timeout-
-  // bounded and every outcome — success, thrown error, rejection, or timeout —
-  // degrades to "this check just didn't happen this time". This function must
-  // NEVER throw and NEVER call recordFlag/sendFlag: faceVerify already writes
-  // its own face_verifications row + notifies the lecturer on a mismatch, and
-  // in-exam identity re-checks are advisory-only, not part of the 3-strike
-  // hard-flag auto-submit path.
-  async function handleIdentityTrigger() {
-    if (!exam.require_identity_verification || !submission?.id) return;
-    if (identityCheckInFlightRef.current) return;
-    identityCheckInFlightRef.current = true;
-    try {
-      const human = await withTimeout(loadHuman(), 15_000);
-      const video = document.querySelector<HTMLVideoElement>("video");
-      if (!human || !video) return;
-      const r = await withTimeout(extractDescriptor(human, video), 10_000);
-      if (!r || r.faceCount !== 1) return;
-      const res = await withTimeout(
-        faceVerify({
-          data: {
-            context: "in_exam",
-            examId: exam.id,
-            submissionId: submission.id,
-            embeddings: [r.descriptor],
-            antispoofScore: r.antispoofScore,
-            livenessScore: r.livenessScore,
-          },
-        }),
-        12_000
-      );
-      if (!res) return; // timed out, threw, or rejected — treat as "didn't happen"
-      consecutiveMismatchRef.current = res.passed ? 0 : consecutiveMismatchRef.current + 1;
-      // 3 consecutive mismatches (Global Constraint #8: advisory only, never
-      // counted toward the 3-strike auto-submit — faceVerify already writes the
-      // flag via its own face_verifications row + pushNotification, no call to
-      // recordFlag here).
-    } catch {
-      // Belt-and-braces — withTimeout already never rejects, but this
-      // function must be bulletproof against any future change upstream.
-    } finally {
-      identityCheckInFlightRef.current = false;
-    }
-  }
-
   const q = questions[idx];
 
   function setAns(v: string) {
@@ -522,17 +447,6 @@ function TakeExam() {
     setSubmitting(true);
     submittingRef.current = true;
     try {
-      // Task 6: best-effort submit-time identity snapshot. Deliberately NOT
-      // awaited — submitExam (right below) must fire with ZERO added latency,
-      // not just bounded latency, regardless of how fast or slow the camera/
-      // model/network happen to be. fireSubmitIdentityCheck is fired here and
-      // left running in the background, in parallel with submitExam, not
-      // before it — see the shared helper above for the individual per-step
-      // timeout wrapping and the outer belt-and-braces cap.
-      if (exam.require_identity_verification) {
-        fireSubmitIdentityCheck(exam.id, submission.id);
-      }
-
       await submitExam({
         data: { examId: exam.id, submissionId: submission.id, answers },
       });
@@ -602,16 +516,12 @@ function TakeExam() {
   }
 
   if (!q) {
-    return (
-      <div className="p-8 text-center text-ink/50">
-        No questions available for this exam.
-      </div>
-    );
+    return <div className="p-8 text-center text-ink/50">No questions available for this exam.</div>;
   }
 
   const mcqOptions: string[] =
     q.type === "MCQ"
-      ? (q.meta as any)?.options ?? ["Option A", "Option B", "Option C", "Option D"]
+      ? ((q.meta as any)?.options ?? ["Option A", "Option B", "Option C", "Option D"])
       : [];
   const mcqOptionImages: (string | null)[] =
     q.type === "MCQ" ? ((q.meta as any)?.option_images ?? [null, null, null, null]) : [];
@@ -654,7 +564,9 @@ function TakeExam() {
             </button>
           )}
           {exam.require_camera ? (
-            <><Camera className="w-3.5 h-3.5 text-lime" /> proctoring on</>
+            <>
+              <Camera className="w-3.5 h-3.5 text-lime" /> proctoring on
+            </>
           ) : (
             <span className="opacity-50">no proctoring</span>
           )}
@@ -670,15 +582,18 @@ function TakeExam() {
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span>
             Flag {integrityFlags}/{INTEGRITY.FLAG_THRESHOLD}:{" "}
-            {lastFlagType === "multiple-faces" && "Another face was detected on camera — please ensure you are alone."}
-            {lastFlagType === "fullscreen-exit" && "You exited fullscreen — stay in fullscreen for the duration of the exam."}
-            {lastFlagType === "tab-switch" && "You left the exam tab — keep this tab focused at all times."}
+            {lastFlagType === "multiple-faces" &&
+              "Another face was detected on camera — please ensure you are alone."}
+            {lastFlagType === "fullscreen-exit" &&
+              "You exited fullscreen — stay in fullscreen for the duration of the exam."}
+            {lastFlagType === "tab-switch" &&
+              "You left the exam tab — keep this tab focused at all times."}
             {lastFlagType === "copy" && "Copy attempt detected."}
             {lastFlagType === "paste" && "Paste attempt detected."}
             {lastFlagType === "right-click" && "Right-click is disabled during the exam."}
             {lastFlagType === "screenshot" && "Screenshot attempt detected."}
-            {!lastFlagType && "Integrity violation recorded."}
-            {" "}{INTEGRITY.FLAG_THRESHOLD} flags will auto-submit your exam with score locked at 0.
+            {!lastFlagType && "Integrity violation recorded."} {INTEGRITY.FLAG_THRESHOLD} flags will
+            auto-submit your exam with score locked at 0.
           </span>
         </div>
       )}
@@ -688,7 +603,6 @@ function TakeExam() {
           mode="monitor"
           submissionId={submission?.id}
           onHardFlag={(type, label) => sendFlagRef.current(type, label)}
-          onIdentityTrigger={exam.require_identity_verification ? handleIdentityTrigger : undefined}
         />
       )}
       <div className="grid lg:grid-cols-[1fr_280px] gap-6 p-4 md:p-8">
@@ -703,8 +617,7 @@ function TakeExam() {
                 flagged.has(q.id) ? "bg-amber" : "bg-card"
               }`}
             >
-              <Flag className="w-3.5 h-3.5" />{" "}
-              {flagged.has(q.id) ? "Flagged" : "Flag"}
+              <Flag className="w-3.5 h-3.5" /> {flagged.has(q.id) ? "Flagged" : "Flag"}
             </button>
           </div>
 
@@ -736,12 +649,18 @@ function TakeExam() {
                     <button
                       onClick={() => setAns(letter)}
                       className={`w-full flex items-start gap-3 px-4 py-3 rounded-xl border-2 border-ink font-medium text-left transition-colors ${
-                        answers[q.id] === letter ? "bg-lime shadow-brut-sm" : "bg-card hover:bg-secondary"
+                        answers[q.id] === letter
+                          ? "bg-lime shadow-brut-sm"
+                          : "bg-card hover:bg-secondary"
                       }`}
                     >
                       <span className="font-mono text-xs shrink-0 w-5 mt-0.5">{letter}</span>
                       <span className="flex-1 min-w-0">
-                        <span dangerouslySetInnerHTML={{ __html: renderMarkdown(mcqOptions[i] ?? `Option ${letter}`) }} />
+                        <span
+                          dangerouslySetInnerHTML={{
+                            __html: renderMarkdown(mcqOptions[i] ?? `Option ${letter}`),
+                          }}
+                        />
                         {hasImg && (
                           <img
                             src={mcqOptionImages[i]!}
@@ -830,13 +749,16 @@ function TakeExam() {
           </div>
           <div className="mt-4 text-xs space-y-1.5">
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded border-2 border-ink bg-lime" /> Answered ({answeredCount})
+              <span className="w-3 h-3 rounded border-2 border-ink bg-lime" /> Answered (
+              {answeredCount})
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded border-2 border-ink bg-amber" /> Flagged ({flagged.size})
+              <span className="w-3 h-3 rounded border-2 border-ink bg-amber" /> Flagged (
+              {flagged.size})
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded border-2 border-ink bg-background" /> Skipped ({skippedCount})
+              <span className="w-3 h-3 rounded border-2 border-ink bg-background" /> Skipped (
+              {skippedCount})
             </div>
           </div>
           <button
@@ -861,7 +783,9 @@ function TakeExam() {
                     One more step
                   </span>
                   <h2 className="mt-2 font-display font-extrabold text-3xl">Review &amp; submit</h2>
-                  <p className="text-sm text-muted-foreground mt-1">{exam.classCode} · {exam.title}</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {exam.classCode} · {exam.title}
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -875,16 +799,28 @@ function TakeExam() {
 
               <div className="grid grid-cols-3 divide-x divide-ink/10 text-center mt-5 border-2 border-ink rounded-2xl overflow-hidden">
                 <div className="px-4 py-3">
-                  <div className="font-display font-extrabold text-3xl text-violet">{answeredCount}</div>
-                  <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mt-1">Answered</div>
+                  <div className="font-display font-extrabold text-3xl text-violet">
+                    {answeredCount}
+                  </div>
+                  <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mt-1">
+                    Answered
+                  </div>
                 </div>
                 <div className="px-4 py-3">
-                  <div className="font-display font-extrabold text-3xl text-amber">{flagged.size}</div>
-                  <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mt-1">Flagged</div>
+                  <div className="font-display font-extrabold text-3xl text-amber">
+                    {flagged.size}
+                  </div>
+                  <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mt-1">
+                    Flagged
+                  </div>
                 </div>
                 <div className="px-4 py-3">
-                  <div className="font-display font-extrabold text-3xl text-muted-foreground">{skippedCount}</div>
-                  <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mt-1">Skipped</div>
+                  <div className="font-display font-extrabold text-3xl text-muted-foreground">
+                    {skippedCount}
+                  </div>
+                  <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mt-1">
+                    Skipped
+                  </div>
                 </div>
               </div>
             </div>
@@ -911,9 +847,18 @@ function TakeExam() {
                 })}
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border-2 border-ink bg-lime inline-block" /> Answered</span>
-                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border-2 border-ink bg-amber inline-block" /> Flagged</span>
-                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border-2 border-ink bg-background inline-block" /> Unanswered</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded border-2 border-ink bg-lime inline-block" />{" "}
+                  Answered
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded border-2 border-ink bg-amber inline-block" />{" "}
+                  Flagged
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded border-2 border-ink bg-background inline-block" />{" "}
+                  Unanswered
+                </span>
               </div>
             </div>
 
@@ -924,30 +869,56 @@ function TakeExam() {
                 {questions.map((qq: any, i: number) => {
                   const ans = answers[qq.id];
                   const isFlagged = flagged.has(qq.id);
-                  const opts: string[] = qq.type === "MCQ" ? (qq.meta as any)?.options ?? [] : [];
+                  const opts: string[] = qq.type === "MCQ" ? ((qq.meta as any)?.options ?? []) : [];
                   let answerNode: React.ReactNode;
                   if (!ans) {
-                    answerNode = <span className="text-xs text-muted-foreground italic">Unanswered</span>;
+                    answerNode = (
+                      <span className="text-xs text-muted-foreground italic">Unanswered</span>
+                    );
                   } else if (qq.type === "MCQ") {
                     const li = ["A", "B", "C", "D"].indexOf(ans);
-                    answerNode = <span className="text-xs font-semibold text-violet">{ans} · <span className="font-normal">{stripMarkdown(opts[li] ?? "")}</span></span>;
+                    answerNode = (
+                      <span className="text-xs font-semibold text-violet">
+                        {ans} · <span className="font-normal">{stripMarkdown(opts[li] ?? "")}</span>
+                      </span>
+                    );
                   } else if (qq.type === "TF") {
-                    answerNode = <span className={`text-xs font-bold ${ans === "True" ? "text-lime-700" : "text-pink"}`}>{ans}</span>;
+                    answerNode = (
+                      <span
+                        className={`text-xs font-bold ${ans === "True" ? "text-lime-700" : "text-pink"}`}
+                      >
+                        {ans}
+                      </span>
+                    );
                   } else {
                     const words = ans.trim().split(/\s+/).filter(Boolean).length;
-                    answerNode = <span className="text-xs text-muted-foreground">{words} word{words !== 1 ? "s" : ""}</span>;
+                    answerNode = (
+                      <span className="text-xs text-muted-foreground">
+                        {words} word{words !== 1 ? "s" : ""}
+                      </span>
+                    );
                   }
                   return (
                     <button
                       key={qq.id}
                       onClick={() => reviewGoToQuestion(i)}
                       className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl border-2 text-left hover:shadow-brut-sm transition-all ${
-                        isFlagged ? "border-amber bg-amber/10" : ans ? "border-lime/60 bg-lime/5" : "border-ink/20 bg-background"
+                        isFlagged
+                          ? "border-amber bg-amber/10"
+                          : ans
+                            ? "border-lime/60 bg-lime/5"
+                            : "border-ink/20 bg-background"
                       }`}
                     >
-                      <span className="font-mono text-xs font-bold shrink-0 w-5 text-center text-ink/50">{i + 1}</span>
-                      <span className="text-xs font-mono uppercase px-1.5 py-0.5 rounded border border-ink/20 text-ink/50 shrink-0">{qq.type}</span>
-                      <span className="flex-1 text-sm text-ink/70 truncate">{stripMarkdown(qq.text)}</span>
+                      <span className="font-mono text-xs font-bold shrink-0 w-5 text-center text-ink/50">
+                        {i + 1}
+                      </span>
+                      <span className="text-xs font-mono uppercase px-1.5 py-0.5 rounded border border-ink/20 text-ink/50 shrink-0">
+                        {qq.type}
+                      </span>
+                      <span className="flex-1 text-sm text-ink/70 truncate">
+                        {stripMarkdown(qq.text)}
+                      </span>
                       <span className="shrink-0">{answerNode}</span>
                       {isFlagged && <Flag className="w-3.5 h-3.5 text-amber shrink-0" />}
                     </button>
@@ -961,14 +932,20 @@ function TakeExam() {
               {skippedCount > 0 && (
                 <p className="text-sm text-amber font-medium mb-3 flex items-center gap-1.5">
                   <AlertTriangle className="w-4 h-4 shrink-0" />
-                  {skippedCount} question{skippedCount > 1 ? "s" : ""} unanswered — you can still go back.
+                  {skippedCount} question{skippedCount > 1 ? "s" : ""} unanswered — you can still go
+                  back.
                 </p>
               )}
               <p className="text-sm text-muted-foreground mb-4">
                 Once you submit you can't reopen this paper. Sure you're good?
               </p>
               <div className="flex gap-3">
-                <WakeoutButton variant="secondary" className="flex-1" onClick={() => setShowReview(false)} disabled={submitting}>
+                <WakeoutButton
+                  variant="secondary"
+                  className="flex-1"
+                  onClick={() => setShowReview(false)}
+                  disabled={submitting}
+                >
                   <ChevronLeft className="w-4 h-4" /> Back to exam
                 </WakeoutButton>
                 <button

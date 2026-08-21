@@ -3,9 +3,7 @@ import { useState, useEffect } from "react";
 import { PageHeader, Card } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
-import { IdentityGate } from "@/components/brand/identity-gate";
 import { getStudentExamLobby, startExam } from "@/lib/supabase/exams";
-import { faceBindSession } from "@/lib/supabase/face";
 import { fmtMY } from "@/lib/datetime";
 import {
   MonitorPlay,
@@ -18,9 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-export const Route = createFileRoute(
-  "/_authenticated/student/exams/$examId/lobby"
-)({
+export const Route = createFileRoute("/_authenticated/student/exams/$examId/lobby")({
   head: () => ({ meta: [{ title: "Exam lobby — Aura" }] }),
   loader: async ({ params }) => {
     try {
@@ -45,7 +41,6 @@ function Lobby() {
   const [agreed, setAgreed] = useState(false);
   const [starting, setStarting] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
-  const [identityPassed, setIdentityPassed] = useState(!exam.require_identity_verification);
 
   const existingStatus = exam.existingSubmission?.status;
   const isRetake = existingStatus === "retake-approved";
@@ -60,7 +55,10 @@ function Lobby() {
   useEffect(() => {
     if (isRetake || !exam.end_time) return;
     const msLeft = new Date(exam.end_time).getTime() - Date.now();
-    if (msLeft <= 0) { setExamEnded(true); return; }
+    if (msLeft <= 0) {
+      setExamEnded(true);
+      return;
+    }
     const t = setTimeout(() => setExamEnded(true), msLeft);
     return () => clearTimeout(t);
   }, []);
@@ -100,7 +98,8 @@ function Lobby() {
           <div className="text-5xl mb-4">🖥️</div>
           <h1 className="text-2xl font-black mb-3">Desktop Only</h1>
           <p className="text-gray-700 font-medium">
-            Exams must be taken on a desktop or laptop computer. Please switch to a PC or Mac to continue.
+            Exams must be taken on a desktop or laptop computer. Please switch to a PC or Mac to
+            continue.
           </p>
         </div>
       </div>
@@ -149,15 +148,6 @@ function Lobby() {
       // false "exited fullscreen" flag before the student has done anything.
       await document.documentElement.requestFullscreen().catch(() => {});
       const { submissionId } = await startExam({ data: exam.id });
-      if (exam.require_identity_verification) {
-        // Genuinely fire-and-forget: this only associates the lobby check with
-        // the submission for audit/monitor purposes. The submission row already
-        // exists at this point (startExam succeeded), so this call must never
-        // delay or block the student's path into the exam they've already
-        // started — do NOT await it. Swallow any rejection so it can't surface
-        // as an unhandled promise rejection.
-        faceBindSession({ data: { submissionId, examId: exam.id } }).catch(() => {});
-      }
       // On a retake the server reuses the same submission row (same id), so
       // sessionStorage still holds the previous attempt's answers. Clear them
       // now so the retake page starts completely blank.
@@ -264,9 +254,7 @@ function Lobby() {
           )}
         </Card>
         <Card>
-          <div className="font-display font-bold text-xl mb-3">
-            Before you start
-          </div>
+          <div className="font-display font-bold text-xl mb-3">Before you start</div>
           <ul className="space-y-3 text-sm">
             <li className="flex gap-3">
               <ShieldCheck className="w-5 h-5 text-violet shrink-0" />
@@ -278,21 +266,20 @@ function Lobby() {
             </li>
             <li className="flex gap-3">
               <AlertTriangle className="w-5 h-5 text-amber shrink-0" />
-              3+ flags = auto-submit. Score is locked at 0 — you may file an
-              integrity appeal within 7 days or you receive 0.
+              3+ flags = auto-submit. Score is locked at 0 — you may file an integrity appeal within
+              7 days or you receive 0.
             </li>
             <li className="flex gap-3">
               <Clock className="w-5 h-5 text-sky shrink-0" />
-              Exam closes at {fmt(exam.end_time)}. Submission is forced at that
-              time.
+              Exam closes at {fmt(exam.end_time)}. Submission is forced at that time.
             </li>
             <li className="flex gap-3">
               <Camera className="w-5 h-5 text-violet shrink-0" />
               {exam.require_camera
                 ? "Your camera is monitored during the exam — periodic snapshots are saved for your lecturer to review."
                 : "On-screen monitoring is recorded for review."}{" "}
-              These checks are a deterrent to help keep the exam fair, not a
-              guarantee — academic integrity remains your responsibility.
+              These checks are a deterrent to help keep the exam fair, not a guarantee — academic
+              integrity remains your responsibility.
             </li>
           </ul>
           <label className="mt-5 flex items-center gap-2 text-sm cursor-pointer">
@@ -310,18 +297,10 @@ function Lobby() {
               Complete the camera check on the left to continue.
             </p>
           )}
-          {exam.require_identity_verification && (
-            <div className="mt-4">
-              <div className="text-xs font-mono uppercase tracking-widest text-ink/60 mb-2">
-                Identity check
-              </div>
-              <IdentityGate examId={exam.id} onPassed={() => setIdentityPassed(true)} />
-            </div>
-          )}
           <WakeoutButton
             variant="primary"
             size="default"
-            disabled={!agreed || starting || (exam.require_camera && !cameraReady) || !identityPassed}
+            disabled={!agreed || starting || (exam.require_camera && !cameraReady)}
             onClick={handleStart}
             className="mt-4 w-full rounded-2xl"
           >

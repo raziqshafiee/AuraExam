@@ -3,9 +3,22 @@ import { type ReactNode, Fragment, useState, useEffect } from "react";
 import { Logo } from "./logo";
 import { useAuthUser, signOut, type Role } from "@/lib/auth";
 import {
-  Bell, LogOut, User, ChevronDown, ChevronRight, ChevronLeft, Menu,
-  LayoutDashboard, BookOpen, FileText, Library, Scale,
-  Users, ScrollText, ShieldAlert, Lightbulb, ScanFace,
+  Bell,
+  LogOut,
+  User,
+  ChevronDown,
+  ChevronRight,
+  ChevronLeft,
+  Menu,
+  LayoutDashboard,
+  BookOpen,
+  FileText,
+  Library,
+  Scale,
+  Users,
+  ScrollText,
+  ShieldAlert,
+  Lightbulb,
   type LucideIcon,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -13,50 +26,58 @@ import { useQuery } from "@tanstack/react-query";
 import { getUnreadCount } from "@/lib/supabase/notifications";
 import { getPendingAppealsCount } from "@/lib/supabase/appeals";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { ConfirmModal } from "./confirm-modal";
 
-type NavItem = { to: string; label: string; icon: LucideIcon; badge?: "inbox" | "appeals"; mobileHidden?: boolean };
+type NavItem = {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  badge?: "inbox" | "appeals";
+  mobileHidden?: boolean;
+};
 
 const PRIMARY_NAV: Record<Role, NavItem[]> = {
   student: [
-    { to: "/student",         label: "Dashboard", icon: LayoutDashboard },
-    { to: "/student/classes", label: "Classes",   icon: BookOpen },
-    { to: "/student/exams",   label: "Exams",     icon: FileText, mobileHidden: true },
-    { to: "/study",           label: "Study",     icon: Lightbulb },
-    { to: "/student/appeals", label: "Appeals",   icon: Scale, badge: "appeals" },
-    { to: "/student/verify-identity", label: "Face Match", icon: ScanFace },
+    { to: "/student", label: "Dashboard", icon: LayoutDashboard },
+    { to: "/student/classes", label: "Classes", icon: BookOpen },
+    { to: "/student/exams", label: "Exams", icon: FileText, mobileHidden: true },
+    { to: "/study", label: "Study", icon: Lightbulb },
+    { to: "/student/appeals", label: "Appeals", icon: Scale, badge: "appeals" },
   ],
   lecturer: [
-    { to: "/lecturer",               label: "Dashboard",    icon: LayoutDashboard },
-    { to: "/lecturer/classes",       label: "Classes",      icon: BookOpen },
-    { to: "/lecturer/question-bank", label: "Question Bank",icon: Library },
-    { to: "/lecturer/exams",         label: "Exams",        icon: FileText },
-    { to: "/lecturer/appeals",       label: "Appeals",      icon: Scale, badge: "appeals" },
-    { to: "/lecturer/identity-sessions", label: "Sessions", icon: ScanFace },
+    { to: "/lecturer", label: "Dashboard", icon: LayoutDashboard },
+    { to: "/lecturer/classes", label: "Classes", icon: BookOpen },
+    { to: "/lecturer/question-bank", label: "Question Bank", icon: Library },
+    { to: "/lecturer/exams", label: "Exams", icon: FileText },
+    { to: "/lecturer/appeals", label: "Appeals", icon: Scale, badge: "appeals" },
   ],
   admin: [
-    { to: "/admin",            label: "Dashboard", icon: LayoutDashboard },
-    { to: "/admin/users",      label: "Users",     icon: Users },
-    { to: "/admin/classes",    label: "Classes",   icon: BookOpen },
-    { to: "/admin/exams",      label: "Exams",     icon: FileText },
-    { to: "/admin/integrity",  label: "Integrity", icon: ShieldAlert },
-    { to: "/admin/audit-log",  label: "Audit Log", icon: ScrollText },
-    { to: "/admin/identity",   label: "Identity",  icon: ScanFace },
+    { to: "/admin", label: "Dashboard", icon: LayoutDashboard },
+    { to: "/admin/users", label: "Users", icon: Users },
+    { to: "/admin/classes", label: "Classes", icon: BookOpen },
+    { to: "/admin/exams", label: "Exams", icon: FileText },
+    { to: "/admin/integrity", label: "Integrity", icon: ShieldAlert },
+    { to: "/admin/audit-log", label: "Audit Log", icon: ScrollText },
   ],
 };
 
 // Pinned below primary nav, above logout. Admin has no notifications/profile routes.
 const UTILITY_NAV: Partial<Record<Role, NavItem[]>> = {
   student: [
-    { to: "/student/notifications", label: "Inbox",   icon: Bell, badge: "inbox" },
-    { to: "/student/profile",       label: "Profile", icon: User },
+    { to: "/student/notifications", label: "Inbox", icon: Bell, badge: "inbox" },
+    { to: "/student/profile", label: "Profile", icon: User },
   ],
   lecturer: [
-    { to: "/lecturer/notifications", label: "Inbox",   icon: Bell, badge: "inbox" },
-    { to: "/lecturer/profile",       label: "Profile", icon: User },
+    { to: "/lecturer/notifications", label: "Inbox", icon: Bell, badge: "inbox" },
+    { to: "/lecturer/profile", label: "Profile", icon: User },
   ],
 };
 
@@ -90,9 +111,17 @@ function NavBadge({ count }: { count: number }) {
 }
 
 function NavLink({
-  item, role, pathname, badges, collapsed = false,
+  item,
+  role,
+  pathname,
+  badges,
+  collapsed = false,
 }: {
-  item: NavItem; role: Role; pathname: string; badges: Record<string, number>; collapsed?: boolean;
+  item: NavItem;
+  role: Role;
+  pathname: string;
+  badges: Record<string, number>;
+  collapsed?: boolean;
 }) {
   const Icon = item.icon;
   const active = isActive(item.to, pathname);
@@ -102,9 +131,7 @@ function NavLink({
       to={item.to}
       title={collapsed ? item.label : undefined}
       className={`relative flex items-center ${collapsed ? "justify-center px-0" : "gap-2.5 px-3"} py-2 rounded-xl text-sm font-semibold border-2 transition-colors ${
-        active
-          ? `${ROLE_BG[role]} border-ink shadow-brut-sm`
-          : "border-transparent hover:bg-accent"
+        active ? `${ROLE_BG[role]} border-ink shadow-brut-sm` : "border-transparent hover:bg-accent"
       }`}
     >
       <Icon className="w-4 h-4 shrink-0" />
@@ -119,7 +146,15 @@ function NavLink({
 
 const BOTTOM_NAV_MAX = 4;
 
-function BottomNav({ role, pathname, badges }: { role: Role; pathname: string; badges: Record<string, number> }) {
+function BottomNav({
+  role,
+  pathname,
+  badges,
+}: {
+  role: Role;
+  pathname: string;
+  badges: Record<string, number>;
+}) {
   const primaryItems = PRIMARY_NAV[role].filter((i) => !i.mobileHidden);
   const visibleItems = primaryItems.slice(0, BOTTOM_NAV_MAX);
   const overflowItems = primaryItems.slice(BOTTOM_NAV_MAX);
@@ -139,7 +174,9 @@ function BottomNav({ role, pathname, badges }: { role: Role; pathname: string; b
             }`}
           >
             {active && (
-              <span className={`absolute top-0 left-3 right-3 h-[3px] rounded-b-full ${ROLE_ACCENT[role]}`} />
+              <span
+                className={`absolute top-0 left-3 right-3 h-[3px] rounded-b-full ${ROLE_ACCENT[role]}`}
+              />
             )}
             <div className="relative">
               <Icon className="w-[22px] h-[22px]" />
@@ -164,7 +201,13 @@ function BottomNav({ role, pathname, badges }: { role: Role; pathname: string; b
           <SheetContent side="bottom" className="border-t-2 border-ink rounded-t-2xl p-4">
             <div className="space-y-1 pt-2">
               {overflowItems.map((item) => (
-                <NavLink key={item.to} item={item} role={role} pathname={pathname} badges={badges} />
+                <NavLink
+                  key={item.to}
+                  item={item}
+                  role={role}
+                  pathname={pathname}
+                  badges={badges}
+                />
               ))}
             </div>
           </SheetContent>
@@ -174,19 +217,32 @@ function BottomNav({ role, pathname, badges }: { role: Role; pathname: string; b
   );
 }
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SEGMENT_LABEL: Record<string, string> = {
-  student: "Dashboard", lecturer: "Dashboard", admin: "Dashboard",
-  classes: "Classes", exams: "Exams", "question-bank": "Question Bank",
-  appeals: "Appeals", notifications: "Inbox", profile: "Profile",
-  users: "Users", "audit-log": "Audit Log", integrity: "Integrity",
+  student: "Dashboard",
+  lecturer: "Dashboard",
+  admin: "Dashboard",
+  classes: "Classes",
+  exams: "Exams",
+  "question-bank": "Question Bank",
+  appeals: "Appeals",
+  notifications: "Inbox",
+  profile: "Profile",
+  users: "Users",
+  "audit-log": "Audit Log",
+  integrity: "Integrity",
   settings: "Settings",
-  new: "New Exam", edit: "Edit", results: "Results",
-  monitor: "Monitor", lobby: "Lobby", result: "Result",
-  "submit-confirm": "Submit", take: "Taking Exam",
-  study: "Study", autopsy: "Review",
+  new: "New Exam",
+  edit: "Edit",
+  results: "Results",
+  monitor: "Monitor",
+  lobby: "Lobby",
+  result: "Result",
+  "submit-confirm": "Submit",
+  take: "Taking Exam",
+  study: "Study",
+  autopsy: "Review",
 };
 
 function findEntityName(loaderDataList: unknown[], prevSeg: string): string | null {
@@ -269,12 +325,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   // would mismatch the server-rendered HTML and throw a hydration error.
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
-    try { setCollapsed(localStorage.getItem("aura-sidebar-collapsed") === "1"); } catch {}
+    try {
+      setCollapsed(localStorage.getItem("aura-sidebar-collapsed") === "1");
+    } catch {}
   }, []);
   const toggleCollapsed = () => {
     setCollapsed((c) => {
       const next = !c;
-      try { localStorage.setItem("aura-sidebar-collapsed", next ? "1" : "0"); } catch {}
+      try {
+        localStorage.setItem("aura-sidebar-collapsed", next ? "1" : "0");
+      } catch {}
       return next;
     });
   };
@@ -299,7 +359,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   });
 
   const badges: Record<string, number> = {
-    inbox:   unreadData?.count  ?? 0,
+    inbox: unreadData?.count ?? 0,
     appeals: appealsData?.count ?? 0,
   };
 
@@ -338,7 +398,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen flex">
-      <aside className={`hidden md:flex ${collapsed ? "w-16" : "w-64"} shrink-0 flex-col border-r-2 border-ink bg-sidebar h-screen sticky top-0 overflow-hidden transition-[width] duration-200`}>
+      <aside
+        className={`hidden md:flex ${collapsed ? "w-16" : "w-64"} shrink-0 flex-col border-r-2 border-ink bg-sidebar h-screen sticky top-0 overflow-hidden transition-[width] duration-200`}
+      >
         {/* Logo + role badge + collapse toggle */}
         <div className={`${collapsed ? "p-3" : "p-5"} border-b-2 border-ink`}>
           {collapsed ? (
@@ -374,7 +436,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <ChevronLeft className="w-4 h-4" />
                 </button>
               </div>
-              <div className={`mt-3 inline-block px-2.5 py-1 rounded-full border-2 border-ink text-[10px] font-mono uppercase tracking-widest ${ROLE_BG[role]}`}>
+              <div
+                className={`mt-3 inline-block px-2.5 py-1 rounded-full border-2 border-ink text-[10px] font-mono uppercase tracking-widest ${ROLE_BG[role]}`}
+              >
                 {role}
               </div>
             </>
@@ -384,7 +448,14 @@ export function AppShell({ children }: { children: ReactNode }) {
         {/* Primary nav */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {primaryItems.map((item) => (
-            <NavLink key={item.to} item={item} role={role} pathname={pathname} badges={badges} collapsed={collapsed} />
+            <NavLink
+              key={item.to}
+              item={item}
+              role={role}
+              pathname={pathname}
+              badges={badges}
+              collapsed={collapsed}
+            />
           ))}
         </nav>
 
@@ -392,7 +463,14 @@ export function AppShell({ children }: { children: ReactNode }) {
         {utilityItems.length > 0 && (
           <div className="px-3 pt-3 pb-2 space-y-1 border-t-2 border-ink">
             {utilityItems.map((item) => (
-              <NavLink key={item.to} item={item} role={role} pathname={pathname} badges={badges} collapsed={collapsed} />
+              <NavLink
+                key={item.to}
+                item={item}
+                role={role}
+                pathname={pathname}
+                badges={badges}
+                collapsed={collapsed}
+              />
             ))}
           </div>
         )}
@@ -412,7 +490,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="sticky top-0 z-30 h-14 px-4 md:px-6 border-b-2 border-ink bg-background/85 backdrop-blur flex items-center gap-3">
-          <div className="md:hidden"><Logo to={`/${role}`} /></div>
+          <div className="md:hidden">
+            <Logo to={`/${role}`} />
+          </div>
           <Breadcrumbs />
           <div className="ml-auto flex items-center gap-2">
             {/* Bell — mobile shortcut (sidebar hidden on mobile) */}
@@ -432,7 +512,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             <DropdownMenu>
               <DropdownMenuTrigger className="flex items-center gap-2 px-3 h-10 rounded-full border-2 border-ink bg-card hover:bg-accent">
                 <span className={`w-6 h-6 rounded-full border-2 border-ink ${ROLE_BG[role]}`} />
-                <span className="text-sm font-semibold hidden sm:inline">{user?.name ?? "Guest"}</span>
+                <span className="text-sm font-semibold hidden sm:inline">
+                  {user?.name ?? "Guest"}
+                </span>
                 <ChevronDown className="w-3.5 h-3.5" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="border-2 border-ink shadow-brut">
@@ -440,10 +522,14 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <DropdownMenuSeparator />
                 {role !== "admin" && (
                   <DropdownMenuItem asChild>
-                    <Link to={`/${role}/profile`}><User className="w-4 h-4 mr-2" /> Profile</Link>
+                    <Link to={`/${role}/profile`}>
+                      <User className="w-4 h-4 mr-2" /> Profile
+                    </Link>
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={() => setLogoutOpen(true)}><LogOut className="w-4 h-4 mr-2" /> Log out</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLogoutOpen(true)}>
+                  <LogOut className="w-4 h-4 mr-2" /> Log out
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

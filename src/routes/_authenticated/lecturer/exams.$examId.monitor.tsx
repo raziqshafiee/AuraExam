@@ -21,8 +21,6 @@ import {
   Timer,
 } from "lucide-react";
 import { fmtMY } from "@/lib/datetime";
-import { IdentityBadge } from "@/components/brand/identity-badge";
-import { computeTrustScore } from "@/lib/proctor/trust-score";
 
 export const Route = createFileRoute("/_authenticated/lecturer/exams/$examId/monitor")({
   head: () => ({ meta: [{ title: "Monitor exam — Aura" }] }),
@@ -243,7 +241,6 @@ function Monitor() {
           {sortedSubmissions.map((s: any) => {
             const flags = s.flags ?? 0;
             const flagReasons: FlagReason[] = s.flagReasons ?? [];
-            const trustScore = computeTrustScore(flagReasons);
             const isFlagged = s.status === "flagged";
             const isSubmitted = s.status === "submitted" || s.status === "graded";
             const isInProgress = s.status === "in-progress";
@@ -315,29 +312,6 @@ function Monitor() {
                       ))}
                     </div>
                     <FlagLog flagReasons={flagReasons} />
-                    <div className="flex items-center justify-between mt-1.5">
-                      <span className="text-[10px] font-mono text-muted-foreground">Identity</span>
-                      <IdentityBadge
-                        status={s.identity?.status ?? null}
-                        score={s.identity?.score}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between mt-1.5">
-                      <span className="text-[10px] font-mono text-muted-foreground">
-                        Trust score
-                      </span>
-                      <span
-                        className={`text-xs font-mono font-bold ${
-                          trustScore >= 80
-                            ? "text-green-700"
-                            : trustScore >= 50
-                              ? "text-amber-700"
-                              : "text-pink"
-                        }`}
-                      >
-                        {trustScore}/100
-                      </span>
-                    </div>
                   </div>
 
                   {/* Score */}

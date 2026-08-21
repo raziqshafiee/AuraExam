@@ -23,12 +23,10 @@ import { Route as AuthenticatedStudyIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedStudentIndexRouteImport } from './routes/_authenticated/student/index'
 import { Route as AuthenticatedLecturerIndexRouteImport } from './routes/_authenticated/lecturer/index'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin/index'
-import { Route as AuthenticatedStudentVerifyIdentityRouteImport } from './routes/_authenticated/student/verify-identity'
 import { Route as AuthenticatedStudentProfileRouteImport } from './routes/_authenticated/student/profile'
 import { Route as AuthenticatedStudentNotificationsRouteImport } from './routes/_authenticated/student/notifications'
 import { Route as AuthenticatedLecturerProfileRouteImport } from './routes/_authenticated/lecturer/profile'
 import { Route as AuthenticatedLecturerNotificationsRouteImport } from './routes/_authenticated/lecturer/notifications'
-import { Route as AuthenticatedLecturerIdentitySessionsRouteImport } from './routes/_authenticated/lecturer/identity-sessions'
 import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
 import { Route as AuthenticatedAdminSettingsRouteImport } from './routes/_authenticated/admin/settings'
 import { Route as AuthenticatedAdminIntegrityRouteImport } from './routes/_authenticated/admin/integrity'
@@ -42,7 +40,6 @@ import { Route as AuthenticatedLecturerQuestionBankIndexRouteImport } from './ro
 import { Route as AuthenticatedLecturerExamsIndexRouteImport } from './routes/_authenticated/lecturer/exams.index'
 import { Route as AuthenticatedLecturerClassesIndexRouteImport } from './routes/_authenticated/lecturer/classes.index'
 import { Route as AuthenticatedLecturerAppealsIndexRouteImport } from './routes/_authenticated/lecturer/appeals.index'
-import { Route as AuthenticatedAdminIdentityIndexRouteImport } from './routes/_authenticated/admin/identity.index'
 import { Route as AuthenticatedStudyAutopsyAttemptIdRouteImport } from './routes/_authenticated/study.autopsy.$attemptId'
 import { Route as AuthenticatedStudentClassesClassIdRouteImport } from './routes/_authenticated/student/classes.$classId'
 import { Route as AuthenticatedStudentAppealsScoreRouteImport } from './routes/_authenticated/student/appeals.score'
@@ -51,7 +48,6 @@ import { Route as AuthenticatedStudentAppealsIntegrityRouteImport } from './rout
 import { Route as AuthenticatedLecturerQuestionBankNewRouteImport } from './routes/_authenticated/lecturer/question-bank.new'
 import { Route as AuthenticatedLecturerExamsNewRouteImport } from './routes/_authenticated/lecturer/exams.new'
 import { Route as AuthenticatedLecturerClassesClassIdRouteImport } from './routes/_authenticated/lecturer/classes.$classId'
-import { Route as AuthenticatedAdminIdentityIdRouteImport } from './routes/_authenticated/admin/identity.$id'
 import { Route as AuthenticatedStudentExamsExamIdTakeRouteImport } from './routes/_authenticated/student/exams.$examId.take'
 import { Route as AuthenticatedStudentExamsExamIdSubmitConfirmRouteImport } from './routes/_authenticated/student/exams.$examId.submit-confirm'
 import { Route as AuthenticatedStudentExamsExamIdResultRouteImport } from './routes/_authenticated/student/exams.$examId.result'
@@ -132,12 +128,6 @@ const AuthenticatedAdminIndexRoute = AuthenticatedAdminIndexRouteImport.update({
   path: '/admin/',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedStudentVerifyIdentityRoute =
-  AuthenticatedStudentVerifyIdentityRouteImport.update({
-    id: '/student/verify-identity',
-    path: '/student/verify-identity',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
 const AuthenticatedStudentProfileRoute =
   AuthenticatedStudentProfileRouteImport.update({
     id: '/student/profile',
@@ -160,12 +150,6 @@ const AuthenticatedLecturerNotificationsRoute =
   AuthenticatedLecturerNotificationsRouteImport.update({
     id: '/lecturer/notifications',
     path: '/lecturer/notifications',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedLecturerIdentitySessionsRoute =
-  AuthenticatedLecturerIdentitySessionsRouteImport.update({
-    id: '/lecturer/identity-sessions',
-    path: '/lecturer/identity-sessions',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedAdminUsersRoute = AuthenticatedAdminUsersRouteImport.update({
@@ -244,12 +228,6 @@ const AuthenticatedLecturerAppealsIndexRoute =
     path: '/lecturer/appeals/',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedAdminIdentityIndexRoute =
-  AuthenticatedAdminIdentityIndexRouteImport.update({
-    id: '/admin/identity/',
-    path: '/admin/identity/',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
 const AuthenticatedStudyAutopsyAttemptIdRoute =
   AuthenticatedStudyAutopsyAttemptIdRouteImport.update({
     id: '/study/autopsy/$attemptId',
@@ -296,12 +274,6 @@ const AuthenticatedLecturerClassesClassIdRoute =
   AuthenticatedLecturerClassesClassIdRouteImport.update({
     id: '/lecturer/classes/$classId',
     path: '/lecturer/classes/$classId',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedAdminIdentityIdRoute =
-  AuthenticatedAdminIdentityIdRouteImport.update({
-    id: '/admin/identity/$id',
-    path: '/admin/identity/$id',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedStudentExamsExamIdTakeRoute =
@@ -369,17 +341,14 @@ export interface FileRoutesByFullPath {
   '/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
-  '/lecturer/identity-sessions': typeof AuthenticatedLecturerIdentitySessionsRoute
   '/lecturer/notifications': typeof AuthenticatedLecturerNotificationsRoute
   '/lecturer/profile': typeof AuthenticatedLecturerProfileRoute
   '/student/notifications': typeof AuthenticatedStudentNotificationsRoute
   '/student/profile': typeof AuthenticatedStudentProfileRoute
-  '/student/verify-identity': typeof AuthenticatedStudentVerifyIdentityRoute
   '/admin/': typeof AuthenticatedAdminIndexRoute
   '/lecturer/': typeof AuthenticatedLecturerIndexRoute
   '/student/': typeof AuthenticatedStudentIndexRoute
   '/study/': typeof AuthenticatedStudyIndexRoute
-  '/admin/identity/$id': typeof AuthenticatedAdminIdentityIdRoute
   '/lecturer/classes/$classId': typeof AuthenticatedLecturerClassesClassIdRoute
   '/lecturer/exams/new': typeof AuthenticatedLecturerExamsNewRoute
   '/lecturer/question-bank/new': typeof AuthenticatedLecturerQuestionBankNewRoute
@@ -388,7 +357,6 @@ export interface FileRoutesByFullPath {
   '/student/appeals/score': typeof AuthenticatedStudentAppealsScoreRoute
   '/student/classes/$classId': typeof AuthenticatedStudentClassesClassIdRoute
   '/study/autopsy/$attemptId': typeof AuthenticatedStudyAutopsyAttemptIdRoute
-  '/admin/identity/': typeof AuthenticatedAdminIdentityIndexRoute
   '/lecturer/appeals/': typeof AuthenticatedLecturerAppealsIndexRoute
   '/lecturer/classes/': typeof AuthenticatedLecturerClassesIndexRoute
   '/lecturer/exams/': typeof AuthenticatedLecturerExamsIndexRoute
@@ -421,17 +389,14 @@ export interface FileRoutesByTo {
   '/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
-  '/lecturer/identity-sessions': typeof AuthenticatedLecturerIdentitySessionsRoute
   '/lecturer/notifications': typeof AuthenticatedLecturerNotificationsRoute
   '/lecturer/profile': typeof AuthenticatedLecturerProfileRoute
   '/student/notifications': typeof AuthenticatedStudentNotificationsRoute
   '/student/profile': typeof AuthenticatedStudentProfileRoute
-  '/student/verify-identity': typeof AuthenticatedStudentVerifyIdentityRoute
   '/admin': typeof AuthenticatedAdminIndexRoute
   '/lecturer': typeof AuthenticatedLecturerIndexRoute
   '/student': typeof AuthenticatedStudentIndexRoute
   '/study': typeof AuthenticatedStudyIndexRoute
-  '/admin/identity/$id': typeof AuthenticatedAdminIdentityIdRoute
   '/lecturer/classes/$classId': typeof AuthenticatedLecturerClassesClassIdRoute
   '/lecturer/exams/new': typeof AuthenticatedLecturerExamsNewRoute
   '/lecturer/question-bank/new': typeof AuthenticatedLecturerQuestionBankNewRoute
@@ -440,7 +405,6 @@ export interface FileRoutesByTo {
   '/student/appeals/score': typeof AuthenticatedStudentAppealsScoreRoute
   '/student/classes/$classId': typeof AuthenticatedStudentClassesClassIdRoute
   '/study/autopsy/$attemptId': typeof AuthenticatedStudyAutopsyAttemptIdRoute
-  '/admin/identity': typeof AuthenticatedAdminIdentityIndexRoute
   '/lecturer/appeals': typeof AuthenticatedLecturerAppealsIndexRoute
   '/lecturer/classes': typeof AuthenticatedLecturerClassesIndexRoute
   '/lecturer/exams': typeof AuthenticatedLecturerExamsIndexRoute
@@ -475,17 +439,14 @@ export interface FileRoutesById {
   '/_authenticated/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
   '/_authenticated/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
-  '/_authenticated/lecturer/identity-sessions': typeof AuthenticatedLecturerIdentitySessionsRoute
   '/_authenticated/lecturer/notifications': typeof AuthenticatedLecturerNotificationsRoute
   '/_authenticated/lecturer/profile': typeof AuthenticatedLecturerProfileRoute
   '/_authenticated/student/notifications': typeof AuthenticatedStudentNotificationsRoute
   '/_authenticated/student/profile': typeof AuthenticatedStudentProfileRoute
-  '/_authenticated/student/verify-identity': typeof AuthenticatedStudentVerifyIdentityRoute
   '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
   '/_authenticated/lecturer/': typeof AuthenticatedLecturerIndexRoute
   '/_authenticated/student/': typeof AuthenticatedStudentIndexRoute
   '/_authenticated/study/': typeof AuthenticatedStudyIndexRoute
-  '/_authenticated/admin/identity/$id': typeof AuthenticatedAdminIdentityIdRoute
   '/_authenticated/lecturer/classes/$classId': typeof AuthenticatedLecturerClassesClassIdRoute
   '/_authenticated/lecturer/exams/new': typeof AuthenticatedLecturerExamsNewRoute
   '/_authenticated/lecturer/question-bank/new': typeof AuthenticatedLecturerQuestionBankNewRoute
@@ -494,7 +455,6 @@ export interface FileRoutesById {
   '/_authenticated/student/appeals/score': typeof AuthenticatedStudentAppealsScoreRoute
   '/_authenticated/student/classes/$classId': typeof AuthenticatedStudentClassesClassIdRoute
   '/_authenticated/study/autopsy/$attemptId': typeof AuthenticatedStudyAutopsyAttemptIdRoute
-  '/_authenticated/admin/identity/': typeof AuthenticatedAdminIdentityIndexRoute
   '/_authenticated/lecturer/appeals/': typeof AuthenticatedLecturerAppealsIndexRoute
   '/_authenticated/lecturer/classes/': typeof AuthenticatedLecturerClassesIndexRoute
   '/_authenticated/lecturer/exams/': typeof AuthenticatedLecturerExamsIndexRoute
@@ -529,17 +489,14 @@ export interface FileRouteTypes {
     | '/admin/integrity'
     | '/admin/settings'
     | '/admin/users'
-    | '/lecturer/identity-sessions'
     | '/lecturer/notifications'
     | '/lecturer/profile'
     | '/student/notifications'
     | '/student/profile'
-    | '/student/verify-identity'
     | '/admin/'
     | '/lecturer/'
     | '/student/'
     | '/study/'
-    | '/admin/identity/$id'
     | '/lecturer/classes/$classId'
     | '/lecturer/exams/new'
     | '/lecturer/question-bank/new'
@@ -548,7 +505,6 @@ export interface FileRouteTypes {
     | '/student/appeals/score'
     | '/student/classes/$classId'
     | '/study/autopsy/$attemptId'
-    | '/admin/identity/'
     | '/lecturer/appeals/'
     | '/lecturer/classes/'
     | '/lecturer/exams/'
@@ -581,17 +537,14 @@ export interface FileRouteTypes {
     | '/admin/integrity'
     | '/admin/settings'
     | '/admin/users'
-    | '/lecturer/identity-sessions'
     | '/lecturer/notifications'
     | '/lecturer/profile'
     | '/student/notifications'
     | '/student/profile'
-    | '/student/verify-identity'
     | '/admin'
     | '/lecturer'
     | '/student'
     | '/study'
-    | '/admin/identity/$id'
     | '/lecturer/classes/$classId'
     | '/lecturer/exams/new'
     | '/lecturer/question-bank/new'
@@ -600,7 +553,6 @@ export interface FileRouteTypes {
     | '/student/appeals/score'
     | '/student/classes/$classId'
     | '/study/autopsy/$attemptId'
-    | '/admin/identity'
     | '/lecturer/appeals'
     | '/lecturer/classes'
     | '/lecturer/exams'
@@ -634,17 +586,14 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/integrity'
     | '/_authenticated/admin/settings'
     | '/_authenticated/admin/users'
-    | '/_authenticated/lecturer/identity-sessions'
     | '/_authenticated/lecturer/notifications'
     | '/_authenticated/lecturer/profile'
     | '/_authenticated/student/notifications'
     | '/_authenticated/student/profile'
-    | '/_authenticated/student/verify-identity'
     | '/_authenticated/admin/'
     | '/_authenticated/lecturer/'
     | '/_authenticated/student/'
     | '/_authenticated/study/'
-    | '/_authenticated/admin/identity/$id'
     | '/_authenticated/lecturer/classes/$classId'
     | '/_authenticated/lecturer/exams/new'
     | '/_authenticated/lecturer/question-bank/new'
@@ -653,7 +602,6 @@ export interface FileRouteTypes {
     | '/_authenticated/student/appeals/score'
     | '/_authenticated/student/classes/$classId'
     | '/_authenticated/study/autopsy/$attemptId'
-    | '/_authenticated/admin/identity/'
     | '/_authenticated/lecturer/appeals/'
     | '/_authenticated/lecturer/classes/'
     | '/_authenticated/lecturer/exams/'
@@ -784,13 +732,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/student/verify-identity': {
-      id: '/_authenticated/student/verify-identity'
-      path: '/student/verify-identity'
-      fullPath: '/student/verify-identity'
-      preLoaderRoute: typeof AuthenticatedStudentVerifyIdentityRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
     '/_authenticated/student/profile': {
       id: '/_authenticated/student/profile'
       path: '/student/profile'
@@ -817,13 +758,6 @@ declare module '@tanstack/react-router' {
       path: '/lecturer/notifications'
       fullPath: '/lecturer/notifications'
       preLoaderRoute: typeof AuthenticatedLecturerNotificationsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/lecturer/identity-sessions': {
-      id: '/_authenticated/lecturer/identity-sessions'
-      path: '/lecturer/identity-sessions'
-      fullPath: '/lecturer/identity-sessions'
-      preLoaderRoute: typeof AuthenticatedLecturerIdentitySessionsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/admin/users': {
@@ -917,13 +851,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedLecturerAppealsIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/admin/identity/': {
-      id: '/_authenticated/admin/identity/'
-      path: '/admin/identity'
-      fullPath: '/admin/identity/'
-      preLoaderRoute: typeof AuthenticatedAdminIdentityIndexRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
     '/_authenticated/study/autopsy/$attemptId': {
       id: '/_authenticated/study/autopsy/$attemptId'
       path: '/study/autopsy/$attemptId'
@@ -978,13 +905,6 @@ declare module '@tanstack/react-router' {
       path: '/lecturer/classes/$classId'
       fullPath: '/lecturer/classes/$classId'
       preLoaderRoute: typeof AuthenticatedLecturerClassesClassIdRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/admin/identity/$id': {
-      id: '/_authenticated/admin/identity/$id'
-      path: '/admin/identity/$id'
-      fullPath: '/admin/identity/$id'
-      preLoaderRoute: typeof AuthenticatedAdminIdentityIdRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/student/exams/$examId/take': {
@@ -1053,17 +973,14 @@ interface AuthenticatedRouteChildren {
   AuthenticatedAdminIntegrityRoute: typeof AuthenticatedAdminIntegrityRoute
   AuthenticatedAdminSettingsRoute: typeof AuthenticatedAdminSettingsRoute
   AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
-  AuthenticatedLecturerIdentitySessionsRoute: typeof AuthenticatedLecturerIdentitySessionsRoute
   AuthenticatedLecturerNotificationsRoute: typeof AuthenticatedLecturerNotificationsRoute
   AuthenticatedLecturerProfileRoute: typeof AuthenticatedLecturerProfileRoute
   AuthenticatedStudentNotificationsRoute: typeof AuthenticatedStudentNotificationsRoute
   AuthenticatedStudentProfileRoute: typeof AuthenticatedStudentProfileRoute
-  AuthenticatedStudentVerifyIdentityRoute: typeof AuthenticatedStudentVerifyIdentityRoute
   AuthenticatedAdminIndexRoute: typeof AuthenticatedAdminIndexRoute
   AuthenticatedLecturerIndexRoute: typeof AuthenticatedLecturerIndexRoute
   AuthenticatedStudentIndexRoute: typeof AuthenticatedStudentIndexRoute
   AuthenticatedStudyIndexRoute: typeof AuthenticatedStudyIndexRoute
-  AuthenticatedAdminIdentityIdRoute: typeof AuthenticatedAdminIdentityIdRoute
   AuthenticatedLecturerClassesClassIdRoute: typeof AuthenticatedLecturerClassesClassIdRoute
   AuthenticatedLecturerExamsNewRoute: typeof AuthenticatedLecturerExamsNewRoute
   AuthenticatedLecturerQuestionBankNewRoute: typeof AuthenticatedLecturerQuestionBankNewRoute
@@ -1072,7 +989,6 @@ interface AuthenticatedRouteChildren {
   AuthenticatedStudentAppealsScoreRoute: typeof AuthenticatedStudentAppealsScoreRoute
   AuthenticatedStudentClassesClassIdRoute: typeof AuthenticatedStudentClassesClassIdRoute
   AuthenticatedStudyAutopsyAttemptIdRoute: typeof AuthenticatedStudyAutopsyAttemptIdRoute
-  AuthenticatedAdminIdentityIndexRoute: typeof AuthenticatedAdminIdentityIndexRoute
   AuthenticatedLecturerAppealsIndexRoute: typeof AuthenticatedLecturerAppealsIndexRoute
   AuthenticatedLecturerClassesIndexRoute: typeof AuthenticatedLecturerClassesIndexRoute
   AuthenticatedLecturerExamsIndexRoute: typeof AuthenticatedLecturerExamsIndexRoute
@@ -1097,21 +1013,16 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAdminIntegrityRoute: AuthenticatedAdminIntegrityRoute,
   AuthenticatedAdminSettingsRoute: AuthenticatedAdminSettingsRoute,
   AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,
-  AuthenticatedLecturerIdentitySessionsRoute:
-    AuthenticatedLecturerIdentitySessionsRoute,
   AuthenticatedLecturerNotificationsRoute:
     AuthenticatedLecturerNotificationsRoute,
   AuthenticatedLecturerProfileRoute: AuthenticatedLecturerProfileRoute,
   AuthenticatedStudentNotificationsRoute:
     AuthenticatedStudentNotificationsRoute,
   AuthenticatedStudentProfileRoute: AuthenticatedStudentProfileRoute,
-  AuthenticatedStudentVerifyIdentityRoute:
-    AuthenticatedStudentVerifyIdentityRoute,
   AuthenticatedAdminIndexRoute: AuthenticatedAdminIndexRoute,
   AuthenticatedLecturerIndexRoute: AuthenticatedLecturerIndexRoute,
   AuthenticatedStudentIndexRoute: AuthenticatedStudentIndexRoute,
   AuthenticatedStudyIndexRoute: AuthenticatedStudyIndexRoute,
-  AuthenticatedAdminIdentityIdRoute: AuthenticatedAdminIdentityIdRoute,
   AuthenticatedLecturerClassesClassIdRoute:
     AuthenticatedLecturerClassesClassIdRoute,
   AuthenticatedLecturerExamsNewRoute: AuthenticatedLecturerExamsNewRoute,
@@ -1125,7 +1036,6 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
     AuthenticatedStudentClassesClassIdRoute,
   AuthenticatedStudyAutopsyAttemptIdRoute:
     AuthenticatedStudyAutopsyAttemptIdRoute,
-  AuthenticatedAdminIdentityIndexRoute: AuthenticatedAdminIdentityIndexRoute,
   AuthenticatedLecturerAppealsIndexRoute:
     AuthenticatedLecturerAppealsIndexRoute,
   AuthenticatedLecturerClassesIndexRoute:
