@@ -7,9 +7,6 @@ export interface ExamTokenPayload {
 }
 
 function encodeSecret(secret: string): Uint8Array {
-  if (typeof Buffer !== "undefined") {
-    return new Uint8Array(Buffer.from(secret, "utf-8"));
-  }
   return new TextEncoder().encode(secret);
 }
 
