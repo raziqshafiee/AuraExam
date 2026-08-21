@@ -6,6 +6,7 @@ import { pushNotification } from "./notifications";
 import { cosineSimilarity } from "@/lib/face-id/compare";
 import { nextRegistrationOutcome, canRequestPhotoChange } from "@/lib/face-id/business-rules";
 import { FACE_ID } from "@/lib/constants";
+import { signExamToken } from "./exam-session-token";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
 
@@ -338,4 +339,151 @@ export const reviewFacialProfile = createServerFn({ method: "POST" })
     }
 
     return { ok: true as const };
+  });
+
+// Explicit return type breaks the circular type-inference that would
+// otherwise result from checkInExam recursively calling itself below (the
+// 23505-retry path) inside its own handler.
+type CheckInExamResult =
+  | { outcome: "verified"; submissionId: string; token: string }
+  | { outcome: "retry"; submissionId: string; score: number; attemptsRemaining: number }
+  | { outcome: "checkin-pending-review"; submissionId: string };
+
+// POST: exam-day check-in. Server-authoritative 1:1 match between the
+// student's verified baseline embedding and a fresh live embedding captured
+// at the exam lobby. On success mints a short-lived signed token that
+// startExam requires before it will admit the student.
+export const checkInExam = createServerFn({ method: "POST" })
+  .inputValidator((data: { examId: string; embedding: number[] }) => data)
+  .handler(async ({ data }): Promise<CheckInExamResult> => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const { data: profile } = await db(supabase)
+      .from("user_facial_profiles")
+      .select("status, baseline_embedding")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (profile?.status !== "VERIFIED" || !profile.baseline_embedding) {
+      throw new Error("Your Face ID profile isn't verified yet — contact your lecturer.");
+    }
+
+    const { data: exam } = await db(supabase)
+      .from("exams")
+      .select("class_id, duration, end_time, require_identity_verification")
+      .eq("id", data.examId)
+      .single();
+    if (!exam) throw new Error("Exam not found");
+    if (!exam.require_identity_verification) throw new Error("This exam does not require Face ID check-in.");
+
+    const { data: enrollment } = await db(supabase)
+      .from("class_enrollments")
+      .select("student_id")
+      .eq("class_id", exam.class_id)
+      .eq("student_id", user.id)
+      .maybeSingle();
+    if (!enrollment) throw new Error("You are not enrolled in this exam's class");
+
+    const deadlineMs = exam.end_time
+      ? new Date(exam.end_time).getTime()
+      : Date.now() + (exam.duration ?? 0) * 60_000;
+    const mintToken = (submissionId: string) =>
+      signExamToken({ sub: user.id, examId: data.examId, submissionId }, new Date(deadlineMs + FACE_ID.TOKEN_BUFFER_MS));
+
+    const existing = await db(supabase)
+      .from("submissions")
+      .select("id, checkin_status, checkin_attempts")
+      .eq("exam_id", data.examId)
+      .eq("student_id", user.id)
+      .maybeSingle();
+
+    if (existing.data) {
+      const sub = existing.data;
+      if (sub.checkin_status === "verified") {
+        return { outcome: "verified" as const, submissionId: sub.id, token: await mintToken(sub.id) };
+      }
+      if (sub.checkin_status === "rejected") {
+        throw new Error("Your check-in was rejected. Contact your lecturer.");
+      }
+      if ((sub.checkin_attempts ?? 0) >= FACE_ID.MAX_CHECKIN_ATTEMPTS) {
+        return { outcome: "checkin-pending-review" as const, submissionId: sub.id };
+      }
+
+      const score = cosineSimilarity(profile.baseline_embedding as number[], data.embedding);
+      const attempts = (sub.checkin_attempts ?? 0) + 1;
+
+      if (score >= FACE_ID.MATCH_THRESHOLD) {
+        await db(supabase)
+          .from("submissions")
+          .update({
+            checkin_status: "verified",
+            check_in_score: score,
+            checkin_attempts: attempts,
+            checked_in_at: new Date().toISOString(),
+          })
+          .eq("id", sub.id);
+        return { outcome: "verified" as const, submissionId: sub.id, token: await mintToken(sub.id) };
+      }
+      if (attempts >= FACE_ID.MAX_CHECKIN_ATTEMPTS) {
+        await db(supabase)
+          .from("submissions")
+          .update({ checkin_status: "checkin-pending-review", check_in_score: score, checkin_attempts: attempts })
+          .eq("id", sub.id);
+        return { outcome: "checkin-pending-review" as const, submissionId: sub.id };
+      }
+      await db(supabase)
+        .from("submissions")
+        .update({ check_in_score: score, checkin_attempts: attempts })
+        .eq("id", sub.id);
+      return {
+        outcome: "retry" as const,
+        submissionId: sub.id,
+        score,
+        attemptsRemaining: FACE_ID.MAX_CHECKIN_ATTEMPTS - attempts,
+      };
+    }
+
+    // First attempt for this (student, exam) pair. Insert with
+    // status='checkin-pending' and started_at left unset — startExam later
+    // transitions this to 'in-progress' and stamps started_at only once the
+    // student is actually admitted, so time spent checking in (including any
+    // manual-review wait) never eats into the exam's allotted duration.
+    const score = cosineSimilarity(profile.baseline_embedding as number[], data.embedding);
+    const passed = score >= FACE_ID.MATCH_THRESHOLD;
+    const { data: sub, error } = await db(supabase)
+      .from("submissions")
+      .insert({
+        exam_id: data.examId,
+        student_id: user.id,
+        status: "checkin-pending",
+        total: 0,
+        score: 0,
+        auto_score: 0,
+        flags: 0,
+        checkin_status: passed ? "verified" : "pending",
+        check_in_score: score,
+        checkin_attempts: 1,
+        checked_in_at: passed ? new Date().toISOString() : null,
+      })
+      .select("id")
+      .single();
+
+    if (error?.code === "23505") {
+      return checkInExam({ data });
+    }
+    if (error) throw new Error(error.message);
+
+    if (passed) {
+      return { outcome: "verified" as const, submissionId: sub.id, token: await mintToken(sub.id) };
+    }
+    return {
+      outcome: "retry" as const,
+      submissionId: sub.id,
+      score,
+      attemptsRemaining: FACE_ID.MAX_CHECKIN_ATTEMPTS - 1,
+    };
   });

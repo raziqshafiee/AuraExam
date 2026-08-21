@@ -3,6 +3,7 @@ import { createClient } from "./server";
 import { createAdminClient } from "./admin-client";
 import { pushNotification } from "./notifications";
 import { writeAudit } from "./audit";
+import { verifyExamToken } from "./exam-session-token";
 import { INTEGRITY, ESSAY, APPEAL } from "@/lib/constants";
 import { MY_TZ } from "@/lib/datetime";
 
@@ -1179,25 +1180,23 @@ export const getExamForTaking = createServerFn({ method: "GET" })
 
 // POST: Start exam
 export const startExam = createServerFn({ method: "POST" })
-  .inputValidator((examId: string) => examId)
-  .handler(async ({ data: examId }) => {
+  .inputValidator((data: { examId: string; token?: string }) => data)
+  .handler(async ({ data }) => {
+    const examId = data.examId;
     const supabase = createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
-    // Verify the exam is live and the student is enrolled before creating a submission.
     const { data: examCheck } = await db(supabase)
       .from("exams")
-      .select("status, class_id")
+      .select("status, class_id, require_identity_verification")
       .eq("id", examId)
       .single();
 
     if (!examCheck) throw new Error("Exam not found");
 
-    // For non-live exams, only allow if the student has a retake-approved or
-    // already-started-retake (in-progress) submission.
     if (examCheck.status !== "live") {
       const { data: retakeCheck } = await db(supabase)
         .from("submissions")
@@ -1219,6 +1218,15 @@ export const startExam = createServerFn({ method: "POST" })
 
     if (!enrollment) throw new Error("You are not enrolled in this exam's class");
 
+    const { data: pointRows } = await db(supabase)
+      .from("exam_questions")
+      .select("questions(points)")
+      .eq("exam_id", examId);
+    const totalPoints = (pointRows ?? []).reduce(
+      (sum: number, eq: any) => sum + (eq.questions?.points ?? 0),
+      0,
+    );
+
     const existing = await db(supabase)
       .from("submissions")
       .select("id, status, started_at")
@@ -1228,6 +1236,18 @@ export const startExam = createServerFn({ method: "POST" })
 
     if (existing.data) {
       const sub = existing.data;
+
+      if (sub.status === "checkin-pending") {
+        if (!data.token) throw new Error("Face ID check-in required before starting this exam.");
+        const valid = await verifyExamToken(data.token, { sub: user.id, examId, submissionId: sub.id });
+        if (!valid) throw new Error("Your check-in session has expired — please check in again.");
+        await db(supabase)
+          .from("submissions")
+          .update({ status: "in-progress", started_at: new Date().toISOString(), total: totalPoints })
+          .eq("id", sub.id);
+        return { submissionId: sub.id as string };
+      }
+
       // Retake approved by lecturer — reset the submission for a fresh attempt.
       // started_at is re-stamped so the per-attempt timer restarts cleanly.
       if (sub.status === "retake-approved") {
@@ -1260,15 +1280,9 @@ export const startExam = createServerFn({ method: "POST" })
       return { submissionId: sub.id as string };
     }
 
-    const { data: pointRows } = await db(supabase)
-      .from("exam_questions")
-      .select("questions(points)")
-      .eq("exam_id", examId);
-
-    const totalPoints = (pointRows ?? []).reduce(
-      (sum: number, eq: any) => sum + (eq.questions?.points ?? 0),
-      0,
-    );
+    if (examCheck.require_identity_verification) {
+      throw new Error("Face ID check-in required before starting this exam.");
+    }
 
     const { data: sub, error } = await db(supabase)
       .from("submissions")
