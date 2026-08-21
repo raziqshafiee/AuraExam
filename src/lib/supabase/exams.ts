@@ -25,7 +25,7 @@ function isExamEnded(exam: { status: string; end_time?: string | null }): boolea
 // penalised by network latency after close.
 function computeDeadlineMs(
   sub: { started_at?: string | null; created_at?: string | null } | null,
-  exam: { duration?: number | null; end_time?: string | null }
+  exam: { duration?: number | null; end_time?: string | null },
 ): number {
   const startedAtMs = sub?.started_at
     ? new Date(sub.started_at).getTime()
@@ -50,7 +50,7 @@ function computeDeadlineMs(
 function gradeAnswers(
   eqs: any[],
   submissionId: string,
-  answers: Record<string, string>
+  answers: Record<string, string>,
 ): { score: number; rows: any[] } {
   let score = 0;
   const rows: any[] = [];
@@ -66,18 +66,33 @@ function gradeAnswers(
       if (studentIdx !== undefined) {
         const pts = studentIdx === q.meta?.correct ? (q.points ?? 1) : 0;
         score += pts;
-        rows.push({ submission_id: submissionId, question_id: q.id, answer: studentAnswer, score: pts });
+        rows.push({
+          submission_id: submissionId,
+          question_id: q.id,
+          answer: studentAnswer,
+          score: pts,
+        });
       }
     } else if (q.type === "TF") {
       if (studentAnswer !== "") {
         const studentBool = studentAnswer === "True";
         const pts = studentBool === q.meta?.correct ? (q.points ?? 1) : 0;
         score += pts;
-        rows.push({ submission_id: submissionId, question_id: q.id, answer: studentAnswer, score: pts });
+        rows.push({
+          submission_id: submissionId,
+          question_id: q.id,
+          answer: studentAnswer,
+          score: pts,
+        });
       }
     } else if (q.type === "ESSAY") {
       if (studentAnswer.trim()) {
-        rows.push({ submission_id: submissionId, question_id: q.id, answer: studentAnswer.slice(0, ESSAY.MAX_CHARS), score: null });
+        rows.push({
+          submission_id: submissionId,
+          question_id: q.id,
+          answer: studentAnswer.slice(0, ESSAY.MAX_CHARS),
+          score: null,
+        });
       }
     }
   }
@@ -92,7 +107,7 @@ function gradeAnswers(
 async function persistAnswers(
   admin: ReturnType<typeof createAdminClient>,
   submissionId: string,
-  rows: any[]
+  rows: any[],
 ) {
   if (rows.length > 0) {
     const keepIds = rows.map((r) => r.question_id);
@@ -106,10 +121,7 @@ async function persistAnswers(
       .eq("submission_id", submissionId)
       .not("question_id", "in", `(${keepIds.join(",")})`);
   } else {
-    await (admin as any)
-      .from("essay_answers")
-      .delete()
-      .eq("submission_id", submissionId);
+    await (admin as any).from("essay_answers").delete().eq("submission_id", submissionId);
   }
 }
 
@@ -166,7 +178,7 @@ function toCanonicalAnswers(
   submissionId: string,
   eqs: any[],
   shuffleOn: boolean,
-  answers: Record<string, string>
+  answers: Record<string, string>,
 ): Record<string, string> {
   if (!shuffleOn) return answers;
   const out: Record<string, string> = { ...answers };
@@ -237,98 +249,98 @@ type CreateExamInput = {
 };
 
 // GET: Lecturer's exams
-export const getLecturerExams = createServerFn({ method: "GET" }).handler(
-  async () => {
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error("Unauthorized");
+export const getLecturerExams = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
 
-    const { data: classes } = await db(supabase)
-      .from("classes")
-      .select("id")
-      .eq("lecturer_id", user.id);
+  const { data: classes } = await db(supabase)
+    .from("classes")
+    .select("id")
+    .eq("lecturer_id", user.id);
 
-    if (!classes || classes.length === 0) return [] as ExamListItem[];
+  if (!classes || classes.length === 0) return [] as ExamListItem[];
 
-    const classIds = classes.map((c: any) => c.id);
+  const classIds = classes.map((c: any) => c.id);
 
-    const { data: exams, error } = await db(supabase)
-      .from("exams")
-      .select("*, classes(code, name)")
-      .in("class_id", classIds)
-      .order("created_at", { ascending: false });
+  const { data: exams, error } = await db(supabase)
+    .from("exams")
+    .select("*, classes(code, name)")
+    .in("class_id", classIds)
+    .order("created_at", { ascending: false });
 
-    if (error) throw new Error(error.message);
+  if (error) throw new Error(error.message);
 
-    const examIds = ((exams ?? []) as any[]).map((e: any) => e.id);
+  const examIds = ((exams ?? []) as any[]).map((e: any) => e.id);
 
-    // Which exams have at least one essay question
-    const examsWithEssays = new Set<string>();
-    if (examIds.length > 0) {
-      const { data: eq } = await db(supabase)
-        .from("exam_questions")
-        .select("exam_id, questions(type)")
-        .in("exam_id", examIds);
-      for (const row of (eq ?? []) as any[]) {
-        if (row.questions?.type === "essay") examsWithEssays.add(row.exam_id);
-      }
+  // Which exams have at least one essay question
+  const examsWithEssays = new Set<string>();
+  if (examIds.length > 0) {
+    const { data: eq } = await db(supabase)
+      .from("exam_questions")
+      .select("exam_id, questions(type)")
+      .in("exam_id", examIds);
+    for (const row of (eq ?? []) as any[]) {
+      if (row.questions?.type === "essay") examsWithEssays.add(row.exam_id);
     }
-
-    // Submission stats per exam
-    type SubStat = { count: number; pctSum: number; pctCount: number; essaysPending: number };
-    const subStats: Record<string, SubStat> = {};
-    if (examIds.length > 0) {
-      const { data: subs } = await db(supabase)
-        .from("submissions")
-        .select("exam_id, score, total, status")
-        .in("exam_id", examIds)
-        .neq("status", "in-progress");
-      for (const s of (subs ?? []) as any[]) {
-        if (!subStats[s.exam_id]) subStats[s.exam_id] = { count: 0, pctSum: 0, pctCount: 0, essaysPending: 0 };
-        subStats[s.exam_id].count++;
-        if (s.status === "submitted" && examsWithEssays.has(s.exam_id)) subStats[s.exam_id].essaysPending++;
-        if (s.score != null && s.total > 0) {
-          subStats[s.exam_id].pctSum += (s.score / s.total) * 100;
-          subStats[s.exam_id].pctCount++;
-        }
-      }
-    }
-
-    // Enrolled student count per class
-    const enrollCounts: Record<string, number> = {};
-    const { data: enrollments } = await db(supabase)
-      .from("class_enrollments")
-      .select("class_id")
-      .in("class_id", classIds);
-    for (const en of (enrollments ?? []) as any[]) {
-      enrollCounts[en.class_id] = (enrollCounts[en.class_id] ?? 0) + 1;
-    }
-
-    return (exams ?? []).map((e: any) => {
-      const stat = subStats[e.id];
-      return {
-        id: e.id,
-        title: e.title,
-        class_id: e.class_id,
-        classCode: e.classes?.code ?? "",
-        className: e.classes?.name ?? "",
-        start_time: e.start_time,
-        end_time: e.end_time,
-        duration: e.duration,
-        require_camera: e.require_camera ?? false,
-        questions_count: e.questions_count,
-        status: e.status,
-        created_at: e.created_at,
-        submissionCount: stat?.count ?? 0,
-        enrolledCount: enrollCounts[e.class_id] ?? 0,
-        avgScore: stat && stat.pctCount > 0 ? Math.round(stat.pctSum / stat.pctCount) : null,
-        essaysPending: stat?.essaysPending ?? 0,
-      };
-    }) as ExamListItem[];
   }
-);
+
+  // Submission stats per exam
+  type SubStat = { count: number; pctSum: number; pctCount: number; essaysPending: number };
+  const subStats: Record<string, SubStat> = {};
+  if (examIds.length > 0) {
+    const { data: subs } = await db(supabase)
+      .from("submissions")
+      .select("exam_id, score, total, status")
+      .in("exam_id", examIds)
+      .neq("status", "in-progress");
+    for (const s of (subs ?? []) as any[]) {
+      if (!subStats[s.exam_id])
+        subStats[s.exam_id] = { count: 0, pctSum: 0, pctCount: 0, essaysPending: 0 };
+      subStats[s.exam_id].count++;
+      if (s.status === "submitted" && examsWithEssays.has(s.exam_id))
+        subStats[s.exam_id].essaysPending++;
+      if (s.score != null && s.total > 0) {
+        subStats[s.exam_id].pctSum += (s.score / s.total) * 100;
+        subStats[s.exam_id].pctCount++;
+      }
+    }
+  }
+
+  // Enrolled student count per class
+  const enrollCounts: Record<string, number> = {};
+  const { data: enrollments } = await db(supabase)
+    .from("class_enrollments")
+    .select("class_id")
+    .in("class_id", classIds);
+  for (const en of (enrollments ?? []) as any[]) {
+    enrollCounts[en.class_id] = (enrollCounts[en.class_id] ?? 0) + 1;
+  }
+
+  return (exams ?? []).map((e: any) => {
+    const stat = subStats[e.id];
+    return {
+      id: e.id,
+      title: e.title,
+      class_id: e.class_id,
+      classCode: e.classes?.code ?? "",
+      className: e.classes?.name ?? "",
+      start_time: e.start_time,
+      end_time: e.end_time,
+      duration: e.duration,
+      require_camera: e.require_camera ?? false,
+      questions_count: e.questions_count,
+      status: e.status,
+      created_at: e.created_at,
+      submissionCount: stat?.count ?? 0,
+      enrolledCount: enrollCounts[e.class_id] ?? 0,
+      avgScore: stat && stat.pctCount > 0 ? Math.round(stat.pctSum / stat.pctCount) : null,
+      essaysPending: stat?.essaysPending ?? 0,
+    };
+  }) as ExamListItem[];
+});
 
 // GET: Single exam detail
 export const getExam = createServerFn({ method: "GET" })
@@ -351,9 +363,7 @@ export const getExam = createServerFn({ method: "GET" })
 
     const { data: examQuestions, error: eqErr } = await db(supabase)
       .from("exam_questions")
-      .select(
-        "order_index, questions(id, type, text, points, meta, difficulty, tags)"
-      )
+      .select("order_index, questions(id, type, text, points, meta, difficulty, tags)")
       .eq("exam_id", id)
       .order("order_index", { ascending: true });
 
@@ -433,9 +443,7 @@ export const createExam = createServerFn({ method: "POST" })
         question_id: qid,
         order_index: i,
       }));
-      const { error: eqErr } = await db(supabase)
-        .from("exam_questions")
-        .insert(rows);
+      const { error: eqErr } = await db(supabase).from("exam_questions").insert(rows);
       if (eqErr) throw new Error(eqErr.message);
     }
 
@@ -465,9 +473,7 @@ export const updateExam = createServerFn({ method: "POST" })
 
     const locked = ["live", "closed", "graded"] as const;
     if (locked.includes(current?.status)) {
-      throw new Error(
-        `This exam is ${current.status} and can no longer be edited`
-      );
+      throw new Error(`This exam is ${current.status} and can no longer be edited`);
     }
 
     // Identity verification implies camera requirement — see createExam for
@@ -481,7 +487,12 @@ export const updateExam = createServerFn({ method: "POST" })
       // toggle pre-start.
       const { error } = await db(supabase)
         .from("exams")
-        .update({ title: data.title, require_camera: requireCamera, require_identity_verification: data.require_identity_verification, shuffle: data.shuffle })
+        .update({
+          title: data.title,
+          require_camera: requireCamera,
+          require_identity_verification: data.require_identity_verification,
+          shuffle: data.shuffle,
+        })
         .eq("id", data.id);
       if (error) throw new Error(error.message);
       return { id: data.id as string };
@@ -514,9 +525,7 @@ export const updateExam = createServerFn({ method: "POST" })
         question_id: qid,
         order_index: i,
       }));
-      const { error: eqErr } = await db(supabase)
-        .from("exam_questions")
-        .insert(rows);
+      const { error: eqErr } = await db(supabase).from("exam_questions").insert(rows);
       if (eqErr) throw new Error(eqErr.message);
     }
 
@@ -538,8 +547,8 @@ export const updateExam = createServerFn({ method: "POST" })
                 title: "Exam published",
                 body: `${data.title} is now scheduled`,
                 link: "/student/exams",
-              })
-            )
+              }),
+            ),
           );
         }
       } catch (err) {
@@ -616,9 +625,7 @@ export const unpublishExam = createServerFn({ method: "POST" })
       throw new Error("Only upcoming exams can be unpublished");
     }
     if (new Date() >= new Date(exam.start_time)) {
-      throw new Error(
-        "Cannot unpublish — the exam window has already opened"
-      );
+      throw new Error("Cannot unpublish — the exam window has already opened");
     }
 
     const { count } = await db(supabase)
@@ -627,15 +634,10 @@ export const unpublishExam = createServerFn({ method: "POST" })
       .eq("exam_id", id);
 
     if (count && count > 0) {
-      throw new Error(
-        "Cannot unpublish — students have already started this exam"
-      );
+      throw new Error("Cannot unpublish — students have already started this exam");
     }
 
-    const { error } = await db(supabase)
-      .from("exams")
-      .update({ status: "draft" })
-      .eq("id", id);
+    const { error } = await db(supabase).from("exams").update({ status: "draft" }).eq("id", id);
     if (error) throw new Error(error.message);
 
     await writeAudit(user.id, {
@@ -668,7 +670,9 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
 
     const { data: subs, error: subErr } = await db(supabase)
       .from("submissions")
-      .select("id, student_id, status, score, auto_score, flags, appeal_required, submitted_at, profiles!student_id(name)")
+      .select(
+        "id, student_id, status, score, auto_score, flags, appeal_required, submitted_at, profiles!student_id(name)",
+      )
       .eq("exam_id", examId);
 
     if (subErr) throw new Error(subErr.message);
@@ -680,7 +684,7 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
       .eq("exam_id", examId);
     const examTotal = (pointRows ?? []).reduce(
       (sum: number, eq: any) => sum + (eq.questions?.points ?? 0),
-      0
+      0,
     );
 
     // Fetch all enrolled students so we can show who didn't answer
@@ -704,7 +708,9 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
     if (subIds.length > 0) {
       const { data: ea } = await db(supabase)
         .from("essay_answers")
-        .select("id, submission_id, question_id, answer, score, questions(type, text, points, meta)")
+        .select(
+          "id, submission_id, question_id, answer, score, questions(type, text, points, meta)",
+        )
         .in("submission_id", subIds);
       essayAnswers = (ea ?? []).filter((e: any) => e.questions?.type === "ESSAY");
     }
@@ -729,10 +735,18 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
 
     // Most-recent face_verifications row per submission, across all contexts
     // (lobby/in_exam/submit) — drives the identity badge on the results page.
-    const { data: identityRows } = subIds.length > 0
-      ? await db(supabase).from("face_verifications").select("submission_id, context, passed, similarity, created_at").in("submission_id", subIds).order("created_at", { ascending: false })
-      : { data: [] };
-    const identityBySubmission: Record<string, { status: "verified" | "unverified" | "mismatch"; score: number }> = {};
+    const { data: identityRows } =
+      subIds.length > 0
+        ? await db(supabase)
+            .from("face_verifications")
+            .select("submission_id, context, passed, similarity, created_at")
+            .in("submission_id", subIds)
+            .order("created_at", { ascending: false })
+        : { data: [] };
+    const identityBySubmission: Record<
+      string,
+      { status: "verified" | "unverified" | "mismatch"; score: number }
+    > = {};
     for (const row of identityRows ?? []) {
       if (identityBySubmission[row.submission_id]) continue; // most recent only (already sorted desc)
       identityBySubmission[row.submission_id] = {
@@ -784,9 +798,7 @@ export const getLecturerExamResults = createServerFn({ method: "GET" })
 
 // POST: Grade essay answer
 export const gradeEssayAnswer = createServerFn({ method: "POST" })
-  .inputValidator(
-    (data: { answerId: string; submissionId: string; score: number }) => data
-  )
+  .inputValidator((data: { answerId: string; submissionId: string; score: number }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
     const {
@@ -911,7 +923,9 @@ export const getLecturerExamMonitor = createServerFn({ method: "GET" })
     const [subsResult, enrollResult] = await Promise.all([
       db(supabase)
         .from("submissions")
-        .select("id, status, flags, score, auto_score, total, submitted_at, last_seen_at, profiles!student_id(name, id)")
+        .select(
+          "id, status, flags, score, auto_score, total, submitted_at, last_seen_at, profiles!student_id(name, id)",
+        )
         .eq("exam_id", examId),
       db(supabase)
         .from("class_enrollments")
@@ -953,10 +967,18 @@ export const getLecturerExamMonitor = createServerFn({ method: "GET" })
 
     // Most-recent face_verifications row per submission, across all contexts
     // (lobby/in_exam/submit) — drives the identity badge on the monitor page.
-    const { data: identityRows } = subIds.length > 0
-      ? await db(supabase).from("face_verifications").select("submission_id, context, passed, similarity, created_at").in("submission_id", subIds).order("created_at", { ascending: false })
-      : { data: [] };
-    const identityBySubmission: Record<string, { status: "verified" | "unverified" | "mismatch"; score: number }> = {};
+    const { data: identityRows } =
+      subIds.length > 0
+        ? await db(supabase)
+            .from("face_verifications")
+            .select("submission_id, context, passed, similarity, created_at")
+            .in("submission_id", subIds)
+            .order("created_at", { ascending: false })
+        : { data: [] };
+    const identityBySubmission: Record<
+      string,
+      { status: "verified" | "unverified" | "mismatch"; score: number }
+    > = {};
     for (const row of identityRows ?? []) {
       if (identityBySubmission[row.submission_id]) continue; // most recent only (already sorted desc)
       identityBySubmission[row.submission_id] = {
@@ -990,76 +1012,72 @@ export const getLecturerExamMonitor = createServerFn({ method: "GET" })
   });
 
 // GET: Student's exams
-export const getStudentExams = createServerFn({ method: "GET" }).handler(
-  async () => {
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error("Unauthorized");
+export const getStudentExams = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
 
-    const { data: enrollments } = await db(supabase)
-      .from("class_enrollments")
-      .select("class_id")
-      .eq("student_id", user.id);
+  const { data: enrollments } = await db(supabase)
+    .from("class_enrollments")
+    .select("class_id")
+    .eq("student_id", user.id);
 
-    if (!enrollments || enrollments.length === 0) return [];
+  if (!enrollments || enrollments.length === 0) return [];
 
-    const classIds = enrollments.map((e: any) => e.class_id);
+  const classIds = enrollments.map((e: any) => e.class_id);
 
-    const { data: exams, error } = await db(supabase)
-      .from("exams")
-      .select("*, classes(code, name)")
-      .in("class_id", classIds)
-      .neq("status", "draft")
-      .order("start_time", { ascending: true });
+  const { data: exams, error } = await db(supabase)
+    .from("exams")
+    .select("*, classes(code, name)")
+    .in("class_id", classIds)
+    .neq("status", "draft")
+    .order("start_time", { ascending: true });
 
-    if (error) throw new Error(error.message);
+  if (error) throw new Error(error.message);
 
-    const examIds = (exams ?? []).map((e: any) => e.id);
+  const examIds = (exams ?? []).map((e: any) => e.id);
 
-    let submissions: any[] = [];
-    if (examIds.length > 0) {
-      const { data: subs } = await db(supabase)
-        .from("submissions")
-        .select("id, exam_id, status, score")
-        .eq("student_id", user.id)
-        .in("exam_id", examIds);
-      submissions = subs ?? [];
-    }
-
-    // Compute true point totals per exam from question points
-    let examTotals: Record<string, number> = {};
-    if (examIds.length > 0) {
-      const { data: eqRows } = await db(supabase)
-        .from("exam_questions")
-        .select("exam_id, questions(points)")
-        .in("exam_id", examIds);
-      for (const row of eqRows ?? []) {
-        examTotals[row.exam_id] = (examTotals[row.exam_id] ?? 0) + (row.questions?.points ?? 0);
-      }
-    }
-
-    return (exams ?? []).map((e: any) => {
-      const sub = submissions.find((s: any) => s.exam_id === e.id) ?? null;
-      const total = examTotals[e.id] ?? 0;
-      return {
-        id: e.id,
-        title: e.title,
-        classCode: e.classes?.code ?? "",
-        className: e.classes?.name ?? "",
-        start_time: e.start_time,
-        end_time: e.end_time,
-        duration: e.duration,
-        questions_count: e.questions_count,
-        status: e.status as ExamStatus,
-        submission: sub
-          ? { status: sub.status, score: sub.score, total }
-          : null,
-      };
-    });
+  let submissions: any[] = [];
+  if (examIds.length > 0) {
+    const { data: subs } = await db(supabase)
+      .from("submissions")
+      .select("id, exam_id, status, score")
+      .eq("student_id", user.id)
+      .in("exam_id", examIds);
+    submissions = subs ?? [];
   }
-);
+
+  // Compute true point totals per exam from question points
+  let examTotals: Record<string, number> = {};
+  if (examIds.length > 0) {
+    const { data: eqRows } = await db(supabase)
+      .from("exam_questions")
+      .select("exam_id, questions(points)")
+      .in("exam_id", examIds);
+    for (const row of eqRows ?? []) {
+      examTotals[row.exam_id] = (examTotals[row.exam_id] ?? 0) + (row.questions?.points ?? 0);
+    }
+  }
+
+  return (exams ?? []).map((e: any) => {
+    const sub = submissions.find((s: any) => s.exam_id === e.id) ?? null;
+    const total = examTotals[e.id] ?? 0;
+    return {
+      id: e.id,
+      title: e.title,
+      classCode: e.classes?.code ?? "",
+      className: e.classes?.name ?? "",
+      start_time: e.start_time,
+      end_time: e.end_time,
+      duration: e.duration,
+      questions_count: e.questions_count,
+      status: e.status as ExamStatus,
+      submission: sub ? { status: sub.status, score: sub.score, total } : null,
+    };
+  });
+});
 
 // GET: Student exam lobby
 export const getStudentExamLobby = createServerFn({ method: "GET" })
@@ -1129,7 +1147,9 @@ export const getExamForTaking = createServerFn({ method: "GET" })
 
     const { data: exam, error } = await db(supabase)
       .from("exams")
-      .select("id, title, duration, end_time, require_camera, require_identity_verification, shuffle, class_id, classes(code)")
+      .select(
+        "id, title, duration, end_time, require_camera, require_identity_verification, shuffle, class_id, classes(code)",
+      )
       .eq("id", examId)
       .single();
 
@@ -1153,10 +1173,7 @@ export const getExamForTaking = createServerFn({ method: "GET" })
       .maybeSingle();
 
     const deadlineMs = computeDeadlineMs(sub, exam);
-    const remainingSeconds = Math.max(
-      0,
-      Math.floor((deadlineMs - Date.now()) / 1000)
-    );
+    const remainingSeconds = Math.max(0, Math.floor((deadlineMs - Date.now()) / 1000));
 
     const { data: eqs, error: eqErr } = await db(supabase)
       .from("exam_questions")
@@ -1171,11 +1188,12 @@ export const getExamForTaking = createServerFn({ method: "GET" })
     // (grading reads them again in submitExam). image_url and option_images
     // are display-only and safe to expose.
     const sanitizeMeta = (type: string, meta: any) => {
-      if (type === "MCQ") return {
-        options: meta?.options ?? [],
-        option_images: meta?.option_images ?? null,
-        image_url: meta?.image_url ?? null,
-      };
+      if (type === "MCQ")
+        return {
+          options: meta?.options ?? [],
+          option_images: meta?.option_images ?? null,
+          image_url: meta?.image_url ?? null,
+        };
       // TF and ESSAY: only the question image is needed; correct/rubric stay server-side.
       return { image_url: meta?.image_url ?? null };
     };
@@ -1202,7 +1220,10 @@ export const getExamForTaking = createServerFn({ method: "GET" })
           const perm = optionPermFor(sub.id, q.id, opts.length);
           const imgs = (q.meta as any)?.option_images;
           const shuffledImgs = Array.isArray(imgs) ? perm.map((oi) => imgs[oi] ?? null) : imgs;
-          return { ...q, meta: { ...q.meta, options: perm.map((oi) => opts[oi]), option_images: shuffledImgs } };
+          return {
+            ...q,
+            meta: { ...q.meta, options: perm.map((oi) => opts[oi]), option_images: shuffledImgs },
+          };
         }
         return q;
       });
@@ -1220,10 +1241,7 @@ export const getExamForTaking = createServerFn({ method: "GET" })
       },
       submission: sub ? { id: sub.id, status: sub.status } : null,
       remainingSeconds,
-      deadline:
-        deadlineMs === Number.POSITIVE_INFINITY
-          ? null
-          : new Date(deadlineMs).toISOString(),
+      deadline: deadlineMs === Number.POSITIVE_INFINITY ? null : new Date(deadlineMs).toISOString(),
       questions,
     };
   });
@@ -1241,7 +1259,7 @@ export const startExam = createServerFn({ method: "POST" })
     // Verify the exam is live and the student is enrolled before creating a submission.
     const { data: examCheck } = await db(supabase)
       .from("exams")
-      .select("status, class_id")
+      .select("status, class_id, require_identity_verification")
       .eq("id", examId)
       .single();
 
@@ -1288,7 +1306,15 @@ export const startExam = createServerFn({ method: "POST" })
         ]);
         await db(supabase)
           .from("submissions")
-          .update({ status: "in-progress", score: 0, auto_score: 0, flags: 0, submitted_at: null, started_at: new Date().toISOString(), appeal_required: false })
+          .update({
+            status: "in-progress",
+            score: 0,
+            auto_score: 0,
+            flags: 0,
+            submitted_at: null,
+            started_at: new Date().toISOString(),
+            appeal_required: false,
+          })
           .eq("id", sub.id);
         return { submissionId: sub.id as string };
       }
@@ -1303,6 +1329,29 @@ export const startExam = createServerFn({ method: "POST" })
       return { submissionId: sub.id as string };
     }
 
+    // Only the initial-insert path below needs this gate — a student who
+    // already has a submission passed it once already. Blocks/allows based
+    // on identity_checkin_queue's status for this (student, exam); see
+    // docs/superpowers/specs/2026-08-21-identity-checkin-hardblock-design.md.
+    if (examCheck.require_identity_verification) {
+      const admin = createAdminClient();
+      const { data: queueRow } = await (admin as any)
+        .from("identity_checkin_queue")
+        .select("status")
+        .eq("user_id", user.id)
+        .eq("exam_id", examId)
+        .maybeSingle();
+      if (queueRow?.status === "waiting") {
+        throw new Error("Your identity check-in is still pending — please wait for it to clear.");
+      }
+      if (queueRow?.status === "rejected") {
+        throw new Error(
+          "Your identity could not be confirmed for this exam. Contact your lecturer.",
+        );
+      }
+      // No row, or status is 'cleared'/'auto_admitted' — proceed.
+    }
+
     const { data: pointRows } = await db(supabase)
       .from("exam_questions")
       .select("questions(points)")
@@ -1310,7 +1359,7 @@ export const startExam = createServerFn({ method: "POST" })
 
     const totalPoints = (pointRows ?? []).reduce(
       (sum: number, eq: any) => sum + (eq.questions?.points ?? 0),
-      0
+      0,
     );
 
     const { data: sub, error } = await db(supabase)
@@ -1351,9 +1400,7 @@ export const startExam = createServerFn({ method: "POST" })
 // server always holds the latest answers. This is what makes timeout/close/crash
 // recoverable — without it the server has nothing until the final submit.
 export const saveExamProgress = createServerFn({ method: "POST" })
-  .inputValidator(
-    (data: { submissionId: string; answers: Record<string, string> }) => data
-  )
+  .inputValidator((data: { submissionId: string; answers: Record<string, string> }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
     const {
@@ -1409,11 +1456,7 @@ export const saveExamProgress = createServerFn({ method: "POST" })
 // POST: Submit exam
 export const submitExam = createServerFn({ method: "POST" })
   .inputValidator(
-    (data: {
-      examId: string;
-      submissionId: string;
-      answers: Record<string, string>;
-    }) => data
+    (data: { examId: string; submissionId: string; answers: Record<string, string> }) => data,
   )
   .handler(async ({ data }) => {
     const supabase = createClient();
@@ -1461,9 +1504,13 @@ export const submitExam = createServerFn({ method: "POST" })
       data.submissionId,
       eqs ?? [],
       examRow?.shuffle ?? false,
-      data.answers
+      data.answers,
     );
-    const { score, rows: allInserts } = gradeAnswers(eqs ?? [], data.submissionId, canonicalAnswers);
+    const { score, rows: allInserts } = gradeAnswers(
+      eqs ?? [],
+      data.submissionId,
+      canonicalAnswers,
+    );
 
     // Persist final answers via the service-role client and reconcile away any
     // autosaved drafts the student cleared before submitting. Authorization is
@@ -1508,16 +1555,24 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
   .inputValidator((examId: string) => examId)
   .handler(async ({ data: examId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
     // Round 2: exam + submission in parallel — neither depends on the other.
-    const [
-      { data: exam, error: examErr },
-      { data: subData, error: subErr },
-    ] = await Promise.all([
-      db(supabase).from("exams").select("id, title, status, end_time, classes(code)").eq("id", examId).single(),
-      db(supabase).from("submissions").select("id, status, score, flags, submitted_at").eq("exam_id", examId).eq("student_id", user.id).maybeSingle(),
+    const [{ data: exam, error: examErr }, { data: subData, error: subErr }] = await Promise.all([
+      db(supabase)
+        .from("exams")
+        .select("id, title, status, end_time, classes(code)")
+        .eq("id", examId)
+        .single(),
+      db(supabase)
+        .from("submissions")
+        .select("id, status, score, flags, submitted_at")
+        .eq("exam_id", examId)
+        .eq("student_id", user.id)
+        .maybeSingle(),
     ]);
 
     if (examErr) throw new Error(examErr.message);
@@ -1526,11 +1581,27 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
     // Student never started — return a virtual missed result for ended exams.
     if (!subData) {
       if (!isExamEnded(exam)) throw new Error("No submission found for this exam");
-      const { data: pointRows } = await db(supabase).from("exam_questions").select("questions(points)").eq("exam_id", examId);
-      const missedTotal = (pointRows ?? []).reduce((sum: number, eq: any) => sum + (eq.questions?.points ?? 0), 0);
+      const { data: pointRows } = await db(supabase)
+        .from("exam_questions")
+        .select("questions(points)")
+        .eq("exam_id", examId);
+      const missedTotal = (pointRows ?? []).reduce(
+        (sum: number, eq: any) => sum + (eq.questions?.points ?? 0),
+        0,
+      );
       return {
         exam: { id: exam.id, title: exam.title, classCode: exam.classes?.code ?? "" },
-        submission: { id: null, status: "submitted", score: 0, total: missedTotal, flags: 0, submittedAt: null, forceSubmitted: false, missed: true, flagReasons: [] },
+        submission: {
+          id: null,
+          status: "submitted",
+          score: 0,
+          total: missedTotal,
+          flags: 0,
+          submittedAt: null,
+          forceSubmitted: false,
+          missed: true,
+          flagReasons: [],
+        },
         review: [],
       };
     }
@@ -1544,15 +1615,33 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
     if (sub.status === "in-progress") {
       if (isExamEnded(exam)) {
         const [eqRes, savedRes] = await Promise.all([
-          db(supabase).from("exam_questions").select("questions(id, type, points, meta)").eq("exam_id", examId),
-          db(supabase).from("essay_answers").select("question_id, answer").eq("submission_id", sub.id),
+          db(supabase)
+            .from("exam_questions")
+            .select("questions(id, type, points, meta)")
+            .eq("exam_id", examId),
+          db(supabase)
+            .from("essay_answers")
+            .select("question_id, answer")
+            .eq("submission_id", sub.id),
         ]);
         const savedAnswers: Record<string, string> = {};
         for (const row of savedRes.data ?? []) savedAnswers[row.question_id] = row.answer ?? "";
-        const { score: closedScore, rows: gradedRows } = gradeAnswers(eqRes.data ?? [], sub.id, savedAnswers);
+        const { score: closedScore, rows: gradedRows } = gradeAnswers(
+          eqRes.data ?? [],
+          sub.id,
+          savedAnswers,
+        );
         await persistAnswers(createAdminClient(), sub.id, gradedRows);
         const finalizedAt = new Date().toISOString();
-        await db(supabase).from("submissions").update({ status: "submitted", score: closedScore, auto_score: closedScore, submitted_at: finalizedAt }).eq("id", sub.id);
+        await db(supabase)
+          .from("submissions")
+          .update({
+            status: "submitted",
+            score: closedScore,
+            auto_score: closedScore,
+            submitted_at: finalizedAt,
+          })
+          .eq("id", sub.id);
         sub = { ...sub, status: "submitted", score: closedScore, submitted_at: finalizedAt };
         forceSubmitted = gradedRows.length === 0;
       }
@@ -1561,40 +1650,62 @@ export const getStudentExamResult = createServerFn({ method: "GET" })
     // Round 3: all remaining reads in parallel — points total, flag log, and
     // review questions+essays (conditionally) all depend on sub.id but not each other.
     const needsReview = sub.status === "submitted" || sub.status === "graded";
-    const [
-      { data: pointRows },
-      { data: fr },
-      { data: eqReviewData },
-      { data: eaReviewData },
-    ] = await Promise.all([
-      db(supabase).from("exam_questions").select("questions(points)").eq("exam_id", examId),
-      db(supabase).from("flag_reasons").select("time, type, label").eq("submission_id", sub.id),
-      needsReview
-        ? db(supabase).from("exam_questions").select("order_index, questions(id, type, text, points, meta)").eq("exam_id", examId).order("order_index", { ascending: true })
-        : Promise.resolve({ data: [] as any[] }),
-      needsReview
-        ? db(supabase).from("essay_answers").select("question_id, answer, score").eq("submission_id", sub.id)
-        : Promise.resolve({ data: [] as any[] }),
-    ]);
+    const [{ data: pointRows }, { data: fr }, { data: eqReviewData }, { data: eaReviewData }] =
+      await Promise.all([
+        db(supabase).from("exam_questions").select("questions(points)").eq("exam_id", examId),
+        db(supabase).from("flag_reasons").select("time, type, label").eq("submission_id", sub.id),
+        needsReview
+          ? db(supabase)
+              .from("exam_questions")
+              .select("order_index, questions(id, type, text, points, meta)")
+              .eq("exam_id", examId)
+              .order("order_index", { ascending: true })
+          : Promise.resolve({ data: [] as any[] }),
+        needsReview
+          ? db(supabase)
+              .from("essay_answers")
+              .select("question_id, answer, score")
+              .eq("submission_id", sub.id)
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
 
-    const examTotal = (pointRows ?? []).reduce((sum: number, eq: any) => sum + (eq.questions?.points ?? 0), 0);
+    const examTotal = (pointRows ?? []).reduce(
+      (sum: number, eq: any) => sum + (eq.questions?.points ?? 0),
+      0,
+    );
 
     let review: any[] = [];
     if (needsReview) {
       const essayMap: Record<string, { answer: string; score: number | null }> = {};
-      for (const ea of eaReviewData ?? []) essayMap[ea.question_id] = { answer: ea.answer, score: ea.score };
+      for (const ea of eaReviewData ?? [])
+        essayMap[ea.question_id] = { answer: ea.answer, score: ea.score };
       review = (eqReviewData ?? []).map((eq: any) => {
         const q = eq.questions;
         const essay = essayMap[q.id] ?? null;
-        return { orderIndex: eq.order_index, id: q.id, type: q.type, text: q.text, points: q.points, meta: q.meta, essayAnswer: essay?.answer ?? null, essayScore: essay?.score ?? null };
+        return {
+          orderIndex: eq.order_index,
+          id: q.id,
+          type: q.type,
+          text: q.text,
+          points: q.points,
+          meta: q.meta,
+          essayAnswer: essay?.answer ?? null,
+          essayScore: essay?.score ?? null,
+        };
       });
     }
 
     return {
       exam: { id: exam.id, title: exam.title, classCode: exam.classes?.code ?? "" },
       submission: {
-        id: sub.id, status: sub.status, score: sub.score, total: examTotal,
-        flags: sub.flags ?? 0, submittedAt: sub.submitted_at, forceSubmitted, missed: false,
+        id: sub.id,
+        status: sub.status,
+        score: sub.score,
+        total: examTotal,
+        flags: sub.flags ?? 0,
+        submittedAt: sub.submitted_at,
+        forceSubmitted,
+        missed: false,
         flagReasons: (fr ?? []).map((f: any) => ({ time: f.time, type: f.type, label: f.label })),
       },
       review,
@@ -1616,9 +1727,7 @@ const HARD_FLAG_TYPES = new Set([
 
 // POST: Record an integrity flag during exam
 export const recordFlag = createServerFn({ method: "POST" })
-  .inputValidator(
-    (data: { submissionId: string; type: string; label: string }) => data
-  )
+  .inputValidator((data: { submissionId: string; type: string; label: string }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
     const {
@@ -1654,7 +1763,13 @@ export const recordFlag = createServerFn({ method: "POST" })
       // hard flags race past the threshold check simultaneously.
       await db(supabase)
         .from("submissions")
-        .update({ flags: newFlags, status: "flagged", score: 0, auto_score: 0, submitted_at: new Date().toISOString() })
+        .update({
+          flags: newFlags,
+          status: "flagged",
+          score: 0,
+          auto_score: 0,
+          submitted_at: new Date().toISOString(),
+        })
         .eq("id", data.submissionId)
         .eq("status", "in-progress");
 
@@ -1695,71 +1810,66 @@ export const recordFlag = createServerFn({ method: "POST" })
       return { flags: newFlags, autoSubmitted: true };
     }
 
-    await db(supabase)
-      .from("submissions")
-      .update({ flags: newFlags })
-      .eq("id", data.submissionId);
+    await db(supabase).from("submissions").update({ flags: newFlags }).eq("id", data.submissionId);
 
     return { flags: newFlags, autoSubmitted: false };
   });
 
 // GET: All exams (admin)
-export const getAllExamsAdmin = createServerFn({ method: "GET" }).handler(
-  async () => {
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error("Unauthorized");
+export const getAllExamsAdmin = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
 
-    const { data: profile } = await db(supabase)
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
+  const { data: profile } = await db(supabase)
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
 
-    if (profile?.role !== "admin") throw new Error("Forbidden");
+  if (profile?.role !== "admin") throw new Error("Forbidden");
 
-    const { data: exams, error } = await db(supabase)
-      .from("exams")
-      .select("id, title, status, questions_count, start_time, created_at, classes(code, name, profiles!lecturer_id(name))")
-      .order("created_at", { ascending: false });
+  const { data: exams, error } = await db(supabase)
+    .from("exams")
+    .select(
+      "id, title, status, questions_count, start_time, created_at, classes(code, name, profiles!lecturer_id(name))",
+    )
+    .order("created_at", { ascending: false });
 
-    if (error) throw new Error(error.message);
+  if (error) throw new Error(error.message);
 
-    return (exams ?? []).map((e: any) => ({
-      id: e.id,
-      title: e.title,
-      classCode: e.classes?.code ?? "",
-      className: e.classes?.name ?? "",
-      lecturerName: e.classes?.profiles?.name ?? "",
-      status: e.status,
-      questions_count: e.questions_count,
-      start_time: e.start_time,
-      created_at: e.created_at,
-    }));
-  }
-);
+  return (exams ?? []).map((e: any) => ({
+    id: e.id,
+    title: e.title,
+    classCode: e.classes?.code ?? "",
+    className: e.classes?.name ?? "",
+    lecturerName: e.classes?.profiles?.name ?? "",
+    status: e.status,
+    questions_count: e.questions_count,
+    start_time: e.start_time,
+    created_at: e.created_at,
+  }));
+});
 
 // POST: run the exam status state machine on demand. pg_cron runs this every
 // minute server-side (see scripts/migrate-exam-lifecycle.ts); this endpoint is a
 // fallback so an external scheduler — or the app itself — can drive transitions
 // (upcoming → live → closed → graded) where pg_cron isn't enabled.
-export const syncExamStatuses = createServerFn({ method: "POST" }).handler(
-  async () => {
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    // Any authenticated user may trigger this — it is the fallback driver for
-    // exam lifecycle transitions when pg_cron is not enabled. The RPC itself is
-    // idempotent and safe to call repeatedly; the only risk is DB load, which
-    // the function handles internally.
-    if (!user) throw new Error("Unauthorized");
+export const syncExamStatuses = createServerFn({ method: "POST" }).handler(async () => {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  // Any authenticated user may trigger this — it is the fallback driver for
+  // exam lifecycle transitions when pg_cron is not enabled. The RPC itself is
+  // idempotent and safe to call repeatedly; the only risk is DB load, which
+  // the function handles internally.
+  if (!user) throw new Error("Unauthorized");
 
-    const { error } = await db(supabase).rpc("sync_exam_statuses");
-    if (error) throw new Error(error.message);
+  const { error } = await db(supabase).rpc("sync_exam_statuses");
+  if (error) throw new Error(error.message);
 
-    return { ok: true as const };
-  }
-);
+  return { ok: true as const };
+});
