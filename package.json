@@ -34,6 +34,7 @@
     "migrate:notifications": "tsx scripts/migrate-notifications.ts",
     "migrate:face-verification": "tsx scripts/migrate-face-verification.ts",
     "migrate:face-verification-v2": "tsx scripts/migrate-face-verification-v2.ts",
+    "migrate:identity-checkin": "tsx scripts/migrate-identity-checkin.ts",
     "migrate:grade-config": "tsx scripts/migrate-grade-config.ts",
     "migrate:exam-shuffle": "tsx scripts/migrate-exam-shuffle.ts",
     "migrate:profile-trigger": "tsx scripts/migrate-profile-trigger.ts"

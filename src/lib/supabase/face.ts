@@ -891,6 +891,59 @@ export const faceVerify = createServerFn({ method: "POST" })
       evidence_path: evidencePath,
     });
 
+    // Lobby + attempts exhausted: hard-block instead of fail-soft-passing —
+    // hold the student in a supervisor-reviewable queue (identity_checkin_queue)
+    // rather than letting them straight into the exam. In-exam/submit
+    // contexts never reach this branch (attemptsRemaining stays hardcoded at
+    // 2 for them, only ever recomputed for "lobby" above) and keep the
+    // existing fail-soft behavior via the notification block below.
+    if (!passed && data.context === "lobby" && attemptsRemaining === 0) {
+      const { data: existingQueue } = await (admin as any)
+        .from("identity_checkin_queue")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .eq("exam_id", data.examId)
+        .maybeSingle();
+
+      let queueId = existingQueue?.id;
+      if (!existingQueue) {
+        const { data: inserted, error: queueErr } = await (admin as any)
+          .from("identity_checkin_queue")
+          .insert({ user_id: user.id, exam_id: data.examId })
+          .select("id")
+          .single();
+        if (queueErr) throw new Error(queueErr.message);
+        queueId = inserted.id;
+      } else if (existingQueue.status === "rejected") {
+        // Terminal — do not re-queue, do not notify again.
+        return {
+          passed: false,
+          similarity: Math.round(similarity * 1000) / 1000,
+          attemptsRemaining: 0,
+          elevated: false,
+          queued: false,
+          rejected: true,
+          guidance: "Your identity could not be confirmed. Contact your lecturer.",
+        };
+      }
+      // Re-queuing (existingQueue.status === "waiting"/"cleared"/"auto_admitted")
+      // never overwrites queued_at on the DB side — only the initial insert
+      // above sets it, so re-triggering this branch can't postpone the
+      // auto-admit timeout.
+
+      await notifyIdentityUnverified(supabase, admin, user.id, data.examId);
+
+      return {
+        passed: false,
+        similarity: Math.round(similarity * 1000) / 1000,
+        attemptsRemaining: 0,
+        elevated: false,
+        queued: true,
+        queueId,
+        guidance: "You're in the review queue — your lecturer has been notified.",
+      };
+    }
+
     const elevated = !passed;
     if (!passed && (data.context !== "lobby" || attemptsRemaining === 0)) {
       // Dedupe: fire the lecturer+student notification at most once per
@@ -923,6 +976,187 @@ export const faceVerify = createServerFn({ method: "POST" })
         ? undefined
         : "Try more light, remove your cap/sunglasses, and face the camera directly.",
     };
+  });
+
+// GET: student-facing poll target for the waiting screen. Also where the
+// 5-minute auto-admit timeout is evaluated LAZILY (no cron) — matches this
+// codebase's existing client-triggered-fallback convention (syncExamStatuses).
+const AUTO_ADMIT_MS = 5 * 60_000;
+
+export const getIdentityCheckinStatus = createServerFn({ method: "GET" })
+  .inputValidator((data: { examId: string }) => data)
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const admin = createAdminClient();
+    const { data: row } = await (admin as any)
+      .from("identity_checkin_queue")
+      .select("id, status, queued_at")
+      .eq("user_id", user.id)
+      .eq("exam_id", data.examId)
+      .maybeSingle();
+
+    if (!row) return { status: null as null };
+
+    if (
+      row.status === "waiting" &&
+      Date.now() - new Date(row.queued_at).getTime() > AUTO_ADMIT_MS
+    ) {
+      await (admin as any)
+        .from("identity_checkin_queue")
+        .update({ status: "auto_admitted", cleared_at: new Date().toISOString() })
+        .eq("id", row.id)
+        .eq("status", "waiting"); // no-op if a supervisor decided concurrently
+      return { status: "auto_admitted" as const };
+    }
+
+    return { status: row.status as "waiting" | "cleared" | "auto_admitted" | "rejected" };
+  });
+
+// GET: lecturer/admin-facing list of students currently waiting. Lecturer
+// sees only their own classes' students (same class_enrollments join
+// pattern as getLecturerFaceReviewQueue above); admin sees everyone.
+export const getIdentityCheckinQueue = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+  const { data: profile } = await db(supabase)
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  const admin = createAdminClient();
+  let studentIds: string[] | null = null; // null = no scoping (admin)
+
+  if (profile?.role === "lecturer") {
+    const { data: myClasses } = await db(supabase)
+      .from("classes")
+      .select("id")
+      .eq("lecturer_id", user.id);
+    const classIds = (myClasses ?? []).map((c: any) => c.id);
+    if (classIds.length === 0) return [];
+    const { data: enrollments } = await db(supabase)
+      .from("class_enrollments")
+      .select("student_id")
+      .in("class_id", classIds);
+    studentIds = [...new Set((enrollments ?? []).map((e: any) => e.student_id))];
+    if (studentIds.length === 0) return [];
+  } else if (profile?.role !== "admin") {
+    throw new Error("Forbidden");
+  }
+
+  let query = (admin as any)
+    .from("identity_checkin_queue")
+    .select("id, user_id, queued_at")
+    .eq("status", "waiting")
+    .order("queued_at", { ascending: true });
+  if (studentIds) query = query.in("user_id", studentIds);
+  const { data: rows, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const userIds = [...new Set((rows ?? []).map((r: any) => r.user_id))];
+  const { data: profiles } = userIds.length
+    ? await (admin as any).from("profiles").select("id, name, matric_no").in("id", userIds)
+    : { data: [] };
+  const profileById = new Map((profiles ?? []).map((p: any) => [p.id, p]));
+
+  return (rows ?? []).map((r: any) => {
+    const p = profileById.get(r.user_id);
+    return {
+      id: r.id,
+      studentName: p?.name ?? "Unknown",
+      matricNo: p?.matric_no ?? "",
+      queuedAt: r.queued_at,
+    };
+  });
+});
+
+// POST: lecturer (own students only) or admin (anyone) clears or rejects a
+// queued student. WHERE status = 'waiting' on the update guards against two
+// supervisors deciding concurrently — the second call becomes a no-op.
+export const decideIdentityCheckin = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: { queueId: string; decision: "clear" | "reject"; reason?: string }) => data,
+  )
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+    const { data: profile } = await db(supabase)
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    const admin = createAdminClient();
+    const { data: row } = await (admin as any)
+      .from("identity_checkin_queue")
+      .select("id, user_id, exam_id, status")
+      .eq("id", data.queueId)
+      .single();
+    if (!row || row.status !== "waiting") throw new Error("This entry is not awaiting review");
+
+    const isAdmin = profile?.role === "admin";
+    if (!isAdmin) {
+      if (profile?.role !== "lecturer") throw new Error("Forbidden");
+      const { data: myClasses } = await db(supabase)
+        .from("classes")
+        .select("id")
+        .eq("lecturer_id", user.id);
+      const classIds = (myClasses ?? []).map((c: any) => c.id);
+      const { data: scoped } = classIds.length
+        ? await (admin as any)
+            .from("class_enrollments")
+            .select("student_id")
+            .in("class_id", classIds)
+            .eq("student_id", row.user_id)
+            .maybeSingle()
+        : { data: null };
+      if (!scoped)
+        throw new Error("Forbidden — this student is not enrolled in any of your classes");
+    }
+
+    const newStatus = data.decision === "clear" ? "cleared" : "rejected";
+    const { error } = await (admin as any)
+      .from("identity_checkin_queue")
+      .update({
+        status: newStatus,
+        cleared_by: user.id,
+        cleared_at: new Date().toISOString(),
+        reject_reason: data.decision === "reject" ? (data.reason ?? null) : null,
+      })
+      .eq("id", data.queueId)
+      .eq("status", "waiting");
+    if (error) throw new Error(error.message);
+
+    if (data.decision === "reject") {
+      await writeAudit(user.id, {
+        action: "Rejected exam identity check-in",
+        target: row.user_id,
+        category: "identity",
+      });
+    }
+
+    await pushNotification(supabase, {
+      userId: row.user_id,
+      type: "identity_checkin_decided",
+      title: data.decision === "clear" ? "You're cleared to start" : "Identity check-in rejected",
+      body:
+        data.decision === "clear"
+          ? "Your identity was manually confirmed — you may now start the exam."
+          : (data.reason ?? "Contact your lecturer."),
+    });
+
+    return { success: true as const };
   });
 
 // POST: stamp submission_id onto the lobby verification row right after
