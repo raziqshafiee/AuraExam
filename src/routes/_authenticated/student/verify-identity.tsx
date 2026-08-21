@@ -3,11 +3,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { CheckCircle, Clock, XCircle } from "lucide-react";
 import { Card, PageHeader } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
+import { Progress } from "@/components/ui/progress";
+import { PhotoUpload } from "@/components/brand/photo-upload";
 import { FaceCapture } from "@/components/brand/face-capture";
 import { LivenessChallenge } from "@/components/brand/liveness-challenge";
 import { faceChallenge, faceEnroll, getOpenSessionForMe } from "@/lib/supabase/face";
+import { useAuthUser } from "@/lib/auth";
 import type { DescriptorResult } from "@/lib/face/descriptor";
 import type { ChallengeStep } from "@/lib/face/liveness";
 
@@ -16,20 +20,33 @@ export const Route = createFileRoute("/_authenticated/student/verify-identity")(
   component: VerifyIdentity,
 });
 
-type Step = "consent" | "card" | "co-presence" | "matric" | "liveness" | "live-capture" | "done" | "rejected";
+type Step =
+  | "consent"
+  | "matric" // supervised-only: no card to OCR under lecturer supervision
+  | "upload-card"
+  | "upload-profile"
+  | "liveness"
+  | "live-capture"
+  | "processing"
+  | "done"
+  | "pending"
+  | "rejected";
 
-// Number of independent live descriptors captured in the live-capture step —
-// actual pose-diverse samples (see face-capture.tsx's multi-sample capture),
-// not one frame duplicated.
 const LIVE_SAMPLE_COUNT = 5;
+
+type EnrollResult = {
+  status: "active" | "pending" | "rejected";
+  pendingReason: "face_score" | "ocr_mismatch" | null;
+  ocrName: string | null;
+  ocrMatric: string | null;
+  attemptsRemaining: number;
+};
 
 function average(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((s, v) => s + v, 0) / values.length;
 }
 
-// Module-level promise so the MediaPipe bundle is only fetched once, shared
-// with camera-proctor.tsx's own preload if it also ran this session.
 let mediaPipePromise: Promise<any> | null = null;
 function loadMediaPipe() {
   if (!mediaPipePromise) {
@@ -41,16 +58,10 @@ function loadMediaPipe() {
   return mediaPipePromise;
 }
 
-// Column 2 (indices 8,9,10) of the 4x4 facial transformation matrix is the
-// face forward vector in camera space — same extraction as camera-proctor.tsx.
 function extractYawDeg(matrixData: Float32Array): number {
   return (Math.atan2(-matrixData[8], matrixData[10]) * 180) / Math.PI;
 }
 
-// Display-only bounding-box overlay: derives a rect from the min/max x/y of
-// normalized (0-1) face landmarks and strokes it onto a canvas sized to the
-// video's rendered pixel dimensions. Never touches the stored descriptor —
-// purely a UX nicety, not a precision requirement.
 function drawFaceBox(
   canvas: HTMLCanvasElement | null,
   video: HTMLVideoElement | null,
@@ -67,35 +78,63 @@ function drawFaceBox(
   ctx.clearRect(0, 0, w, h);
   if (!landmarks || landmarks.length === 0) return;
 
-  let minX = 1, maxX = 0, minY = 1, maxY = 0;
+  let minX = 1,
+    maxX = 0,
+    minY = 1,
+    maxY = 0;
   for (const p of landmarks) {
     if (p.x < minX) minX = p.x;
     if (p.x > maxX) maxX = p.x;
     if (p.y < minY) minY = p.y;
     if (p.y > maxY) maxY = p.y;
   }
-  ctx.strokeStyle = "#c4f542"; // lime accent, matches design tokens
+  ctx.strokeStyle = "#c4f542";
   ctx.lineWidth = 3;
   ctx.strokeRect(minX * w, minY * h, (maxX - minX) * w, (maxY - minY) * h);
 }
 
+// Fake but honest progress: there's no incremental signal from the server
+// (OCR + face comparisons happen in one round trip), so this just animates
+// toward 90% and lets the actual response completion jump it to 100.
+function useFauxProgress(active: boolean) {
+  const [value, setValue] = useState(8);
+  useEffect(() => {
+    if (!active) {
+      setValue(8);
+      return;
+    }
+    const interval = setInterval(() => {
+      setValue((v) => (v >= 90 ? 90 : v + (90 - v) * 0.15));
+    }, 300);
+    return () => clearInterval(interval);
+  }, [active]);
+  return value;
+}
+
 function VerifyIdentity() {
+  const { user } = useAuthUser();
   const [step, setStep] = useState<Step>("consent");
   const [cardResult, setCardResult] = useState<DescriptorResult | null>(null);
-  const [evidenceJpeg, setEvidenceJpeg] = useState<string | null>(null);
+  const [cardJpeg, setCardJpeg] = useState<string>("");
+  const [profileResult, setProfileResult] = useState<DescriptorResult | null>(null);
+  const [profileJpeg, setProfileJpeg] = useState<string>("");
   const [matricNo, setMatricNo] = useState("");
   const [challenge, setChallenge] = useState<{ challengeId: string; steps: string[] } | null>(null);
-  const [attemptsRemaining, setAttemptsRemaining] = useState(3);
+  const [enrollResult, setEnrollResult] = useState<EnrollResult | null>(null);
 
-  // ── Supervised window detection (Task 7) ──────────────────────────────
-  // On mount, check whether a lecturer has an open enrollment window that
-  // applies to this student (class-wide or targeted at them individually).
-  // If so, the card/co-presence/liveness-challenge steps are skipped
-  // entirely — physical supervision replaces card provenance and the
-  // in-person lecturer replaces the automated liveness challenge. Only the
-  // matric-number step is kept, and only if the student doesn't already
-  // have one on file.
-  const [sessionInfo, setSessionInfo] = useState<{ sessionId: string; matricNo: string | null } | null>(null);
+  const progress = useFauxProgress(step === "processing");
+
+  // ── Supervised window detection ───────────────────────────────────────
+  const [sessionInfo, setSessionInfo] = useState<{
+    sessionId: string;
+    matricNo: string | null;
+  } | null>(null);
+  // Locked at the moment the student clicks past consent — submitEnrollment
+  // reads THIS, never the live `sessionInfo` state, so a supervised window
+  // that opens mid-flow can't silently redirect a student who already
+  // started the normal card-upload path into the supervised branch (which
+  // would discard their uploaded card/profile photos without them knowing).
+  const supervisedAtStartRef = useRef<{ sessionId: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,26 +144,22 @@ function VerifyIdentity() {
         setSessionInfo({ sessionId: res.sessionId, matricNo: res.matricNo });
         if (res.matricNo) setMatricNo(res.matricNo);
       })
-      .catch(() => {
-        // No open window (or the check failed) — fall through to the
-        // normal card-based flow, which is always the safe default.
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // ── Liveness-step camera + FaceLandmarker, scoped to this route ──────────
-  // LivenessChallenge itself never touches MediaPipe — it only calls
-  // getSignal(). This block is the "small follow-up" that supplies real
-  // signals: a minimal video + FaceLandmarker instance whose latest
-  // blendshapes/yaw sample is kept in a ref for getSignal to read.
+  // ── Liveness-step camera + FaceLandmarker ──────────────────────────────
   const livenessVideoRef = useRef<HTMLVideoElement>(null);
   const livenessCanvasRef = useRef<HTMLCanvasElement>(null);
   const livenessStreamRef = useRef<MediaStream | null>(null);
   const livenessDetectorRef = useRef<any>(null);
   const livenessIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const livenessSignalRef = useRef<{ blendshapes: Record<string, number> | null; yawDeg: number | null }>({
+  const livenessSignalRef = useRef<{
+    blendshapes: Record<string, number> | null;
+    yawDeg: number | null;
+  }>({
     blendshapes: null,
     yawDeg: null,
   });
@@ -151,7 +186,7 @@ function VerifyIdentity() {
         if (cancelled || !mod) return;
         const { FaceLandmarker, FilesetResolver } = mod;
         const resolver = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm",
         );
         const detector = await FaceLandmarker.createFromOptions(resolver, {
           baseOptions: {
@@ -176,7 +211,8 @@ function VerifyIdentity() {
           if (!video || video.readyState < 2 || !livenessDetectorRef.current) return;
           try {
             const result = livenessDetectorRef.current.detectForVideo(video, performance.now());
-            const matrix: Float32Array | null = result.facialTransformationMatrixes?.[0]?.data ?? null;
+            const matrix: Float32Array | null =
+              result.facialTransformationMatrixes?.[0]?.data ?? null;
             const categories: Array<{ categoryName: string; score: number }> | undefined =
               result.faceBlendshapes?.[0]?.categories;
             livenessSignalRef.current = {
@@ -191,9 +227,7 @@ function VerifyIdentity() {
           }
         }, 300);
       } catch {
-        // camera/detector failed to start — getSignal will keep returning
-        // nulls, so LivenessChallenge's checkNow() simply never succeeds and
-        // the student sees no progress rather than a crash.
+        // camera/detector failed to start — getSignal keeps returning nulls
       }
     })();
 
@@ -222,127 +256,192 @@ function VerifyIdentity() {
   }
 
   async function submitEnrollment(liveResults: DescriptorResult[]) {
-    // Supervised path (Task 7): no card, no co-presence evidence, no liveness
-    // challenge — the lecturer's open window (and their physical presence)
-    // stands in for all three. faceEnroll's isSupervised branch skips
-    // challenge validation entirely, so challengeId/challengeStepsCompleted
-    // are sent empty, and evidenceJpegBase64 empty (it's only ever read when
-    // status lands on pending/rejected, which never happens for a supervised
-    // enrollment — faceEnroll always bands it straight to "active").
-    if (sessionInfo) {
+    setStep("processing");
+    const supervised = supervisedAtStartRef.current;
+
+    if (supervised) {
       try {
         const res = await faceEnroll({
           data: {
             embeddingCard: null,
+            embeddingProfile: null,
             embeddingSamples: liveResults.map((r) => r.descriptor),
+            cardImageBase64: "",
+            profileImageBase64: "",
             matricNo,
             challengeId: "",
             challengeStepsCompleted: [],
             antispoofScore: average(liveResults.map((r) => r.antispoofScore)),
             livenessScore: average(liveResults.map((r) => r.livenessScore)),
-            evidenceJpegBase64: "",
-            sessionId: sessionInfo.sessionId,
+            sessionId: supervised.sessionId,
           },
         });
+        setEnrollResult(res as EnrollResult);
         if (res.status === "active") {
           setStep("done");
           toast.success("Identity verified");
         } else {
-          toast.error("Supervised enrollment did not complete — please ask your lecturer to try again.");
+          toast.error(
+            "Supervised enrollment did not complete — please ask your lecturer to try again.",
+          );
+          setStep("live-capture");
         }
       } catch (err: any) {
         toast.error(err.message ?? "Enrollment failed");
+        setStep("live-capture");
       }
       return;
     }
 
-    if (!cardResult || !challenge || !evidenceJpeg) return;
+    if (!cardResult || !profileResult || !challenge) {
+      // Shouldn't happen through the normal UI flow — defensive fallback.
+      setStep("upload-card");
+      return;
+    }
     try {
       const res = await faceEnroll({
         data: {
           embeddingCard: cardResult.descriptor,
-          // Real independent samples from the live-capture step (up to
-          // LIVE_SAMPLE_COUNT; fewer only if some slots exhausted their
-          // per-slot retry budget — see face-capture.tsx).
+          embeddingProfile: profileResult.descriptor,
           embeddingSamples: liveResults.map((r) => r.descriptor),
-          matricNo,
+          cardImageBase64: cardJpeg,
+          profileImageBase64: profileJpeg,
+          matricNo: "",
           challengeId: challenge.challengeId,
           challengeStepsCompleted: challenge.steps,
-          // Averaged across however many live samples we actually got —
-          // representative of the whole capture, not just one lucky frame.
           antispoofScore: average(liveResults.map((r) => r.antispoofScore)),
           livenessScore: average(liveResults.map((r) => r.livenessScore)),
-          // The co-presence (card + face) frame captured right after the
-          // card step, NOT a live-capture frame — this is what a reviewer
-          // in Task 4 actually needs to compare card-to-face.
-          evidenceJpegBase64: evidenceJpeg,
         },
       });
-      if (res.status === "active") { setStep("done"); toast.success("Identity verified"); }
-      else if (res.status === "pending") { setStep("done"); toast.info("Sent for review — you'll hear back within a day"); }
-      else { setAttemptsRemaining(res.attemptsRemaining); setStep(res.attemptsRemaining > 0 ? "card" : "rejected"); }
+      const typed = res as EnrollResult;
+      setEnrollResult(typed);
+      if (typed.status === "active") {
+        setStep("done");
+        toast.success("Identity verified");
+      } else if (typed.status === "pending") {
+        setStep("pending");
+      } else {
+        if (typed.attemptsRemaining > 0) {
+          toast.error("That didn't clear our checks — you can try again.");
+          setStep("upload-card");
+        } else {
+          setStep("rejected");
+        }
+      }
     } catch (err: any) {
       toast.error(err.message ?? "Enrollment failed");
+      setStep("live-capture");
     }
   }
 
   return (
     <>
-      <PageHeader badge="Face Match" title="Verify your identity" subtitle="Required once before your first identity-checked exam." />
+      <PageHeader
+        badge="Face Match"
+        title="Verify your identity"
+        subtitle="Required once before your first identity-checked exam."
+      />
       <Card className="max-w-xl mx-auto space-y-6">
         {step === "consent" && (
           <div className="space-y-4">
-            <p className="text-sm">We store a numeric representation of your face — not a photograph — for as long as your enrollment is active. A photo of your card held next to your face is also kept, but only for a limited retention period, then automatically deleted. No ID card image on its own is ever stored. You may decline and ask your lecturer to verify you in person instead.</p>
+            <p className="text-sm">
+              We store a numeric representation of your face — not a photograph — for as long as
+              your enrollment is active. Your uploaded matric card and profile photo are also kept,
+              but only for a limited retention period, then automatically deleted. Only the FRONT of
+              your card is ever requested — never the back. You may decline and ask your lecturer to
+              verify you in person instead.
+            </p>
             <WakeoutButton
               className="w-full"
               onClick={() => {
-                // Supervised window open: skip card/co-presence/matric-if-known
-                // and go straight to live capture (or matric first, if the
-                // student doesn't have one on file yet).
+                supervisedAtStartRef.current = sessionInfo
+                  ? { sessionId: sessionInfo.sessionId }
+                  : null;
                 if (sessionInfo) setStep(sessionInfo.matricNo ? "live-capture" : "matric");
-                else setStep("card");
+                else setStep("upload-card");
               }}
             >
               I understand, continue
             </WakeoutButton>
           </div>
         )}
-        {step === "card" && (
-          <FaceCapture
-            guide="Hold your student card so it fills the frame"
-            onCapture={(results) => { setCardResult(results[0]); setStep("co-presence"); }}
-          />
-        )}
-        {step === "co-presence" && (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Now hold your card next to your face so both are visible together — this is the photo a reviewer
-              would compare if your enrollment needs a manual check.
-            </p>
-            <FaceCapture
-              guide="Hold your card next to your face"
-              mode="evidence"
-              onCapture={(_results, jpeg) => { setEvidenceJpeg(jpeg); setStep("matric"); }}
-            />
-          </div>
-        )}
+
         {step === "matric" && (
           <div className="space-y-3">
             <label className="text-xs font-mono uppercase">Matric number</label>
-            <input value={matricNo} onChange={(e) => setMatricNo(e.target.value)} className="w-full border-2 border-ink rounded-xl px-3 py-2" />
-            {/* Supervised window: skip the automated liveness challenge too —
-                the lecturer is physically present, so go straight to live capture. */}
-            <WakeoutButton className="w-full" onClick={sessionInfo ? () => setStep("live-capture") : startLiveness} disabled={!matricNo}>Continue</WakeoutButton>
+            <input
+              value={matricNo}
+              onChange={(e) => setMatricNo(e.target.value)}
+              className="w-full border-2 border-ink rounded-xl px-3 py-2"
+            />
+            <WakeoutButton
+              className="w-full"
+              onClick={() => setStep("live-capture")}
+              disabled={!matricNo}
+            >
+              Continue
+            </WakeoutButton>
           </div>
         )}
+
+        {step === "upload-card" && (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Upload a clear photo of the <strong>front</strong> of your matric card — never the
+              back.
+            </p>
+            <PhotoUpload
+              guide="Front of your matric card"
+              onCapture={(result, jpeg) => {
+                setCardJpeg(jpeg);
+                if (result) {
+                  setCardResult(result);
+                  setStep("upload-profile");
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {step === "upload-profile" && (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Now upload a clear, front-facing profile photo — this is what future identity checks
+              compare against, so a well-lit, unobstructed shot matters for accuracy.
+            </p>
+            <PhotoUpload
+              guide="Your profile photo"
+              strictFraming
+              onCapture={(result, jpeg) => {
+                setProfileJpeg(jpeg);
+                if (result) {
+                  setProfileResult(result);
+                  startLiveness();
+                }
+              }}
+            />
+          </div>
+        )}
+
         {step === "liveness" && challenge && (
           <div className="space-y-3">
             <div className="aspect-video rounded-2xl border-2 border-ink bg-secondary overflow-hidden relative">
-              <video ref={livenessVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
-              <canvas ref={livenessCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+              <video
+                ref={livenessVideoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full h-full object-cover"
+              />
+              <canvas
+                ref={livenessCanvasRef}
+                className="absolute inset-0 w-full h-full pointer-events-none"
+              />
             </div>
             {!livenessCamReady && (
-              <p className="text-xs text-center font-mono text-muted-foreground">Starting camera…</p>
+              <p className="text-xs text-center font-mono text-muted-foreground">
+                Starting camera…
+              </p>
             )}
             <LivenessChallenge
               steps={challenge.steps as ChallengeStep[]}
@@ -351,6 +450,7 @@ function VerifyIdentity() {
             />
           </div>
         )}
+
         {step === "live-capture" && (
           <FaceCapture
             guide="Hold still — we'll capture a few frames"
@@ -358,8 +458,85 @@ function VerifyIdentity() {
             onCapture={(results) => submitEnrollment(results)}
           />
         )}
-        {step === "done" && <p className="text-center font-display font-bold text-lg">You're all set.</p>}
-        {step === "rejected" && <p className="text-center text-pink">Automated verification didn't succeed. Ask your lecturer to verify you in person.</p>}
+
+        {step === "processing" && (
+          <div className="space-y-4 py-6 text-center">
+            <p className="font-display font-bold text-lg">Checking your identity…</p>
+            <Progress value={progress} />
+            <p className="text-xs font-mono text-muted-foreground">
+              Reading your card, comparing photos, and verifying liveness — this takes a few
+              seconds.
+            </p>
+          </div>
+        )}
+
+        {step === "done" && (
+          <div className="space-y-4 text-center">
+            <CheckCircle className="w-12 h-12 text-lime mx-auto" />
+            <p className="font-display font-bold text-lg">You're all set.</p>
+            <div className="text-left text-sm bg-secondary border-2 border-ink rounded-xl p-4 space-y-1">
+              <p>
+                <span className="text-muted-foreground">Name on file:</span> {user?.name ?? "—"}
+              </p>
+              {enrollResult?.ocrMatric && (
+                <p>
+                  <span className="text-muted-foreground">Matric number saved:</span>{" "}
+                  {enrollResult.ocrMatric}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground pt-1">
+                This will be compared against your live camera before and during identity-checked
+                exams.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {step === "pending" && (
+          <div className="space-y-4 text-center">
+            <Clock className="w-12 h-12 text-sky mx-auto" />
+            <p className="font-display font-bold text-lg">
+              {enrollResult?.pendingReason === "ocr_mismatch"
+                ? "Sent to your lecturer for review"
+                : "Sent for review"}
+            </p>
+            <div className="text-left text-sm bg-secondary border-2 border-ink rounded-xl p-4 space-y-1">
+              {enrollResult?.pendingReason === "ocr_mismatch" ? (
+                <>
+                  <p className="text-muted-foreground">
+                    We couldn't clearly read your card — a lecturer teaching one of your classes
+                    will check it manually.
+                  </p>
+                  {enrollResult?.ocrName && (
+                    <p>
+                      <span className="text-muted-foreground">We read:</span> {enrollResult.ocrName}
+                    </p>
+                  )}
+                  {enrollResult?.ocrMatric && (
+                    <p>
+                      <span className="text-muted-foreground">Matric read:</span>{" "}
+                      {enrollResult.ocrMatric}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-muted-foreground">
+                  Your enrollment needs a quick human check before it's approved. You'll be notified
+                  once it's reviewed.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {step === "rejected" && (
+          <div className="space-y-4 text-center">
+            <XCircle className="w-12 h-12 text-pink mx-auto" />
+            <p className="text-pink">
+              Automated verification didn't succeed. Ask your lecturer to verify you in person.
+            </p>
+          </div>
+        )}
       </Card>
     </>
   );
