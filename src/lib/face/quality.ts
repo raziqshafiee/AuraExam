@@ -24,15 +24,22 @@ export function passesQualityGate(r: DescriptorResult | null): { ok: boolean; re
 const PROFILE_MIN_BOX_AREA = 0.5;
 const PROFILE_MAX_BOX_AREA = 0.7;
 
-export function passesProfilePhotoQualityGate(r: DescriptorResult | null): { ok: boolean; reason?: string } {
+export function passesProfilePhotoQualityGate(r: DescriptorResult | null): {
+  ok: boolean;
+  reason?: string;
+} {
   if (!r) return { ok: false, reason: "No frame captured" };
-  if (r.faceCount === 0) return { ok: false, reason: "No face detected — center yourself in the frame" };
+  if (r.faceCount === 0)
+    return { ok: false, reason: "No face detected — center yourself in the frame" };
   if (r.faceCount > 1) return { ok: false, reason: "More than one face detected" };
   if (r.detectorScore < MIN_DETECTOR_SCORE)
     return { ok: false, reason: "Image unclear — check lighting and hold still" };
   if (r.boxArea < PROFILE_MIN_BOX_AREA)
     return { ok: false, reason: "Move closer or zoom in — your face is too small in the frame" };
   if (r.boxArea > PROFILE_MAX_BOX_AREA)
-    return { ok: false, reason: "Move back slightly — your face is too close/cropped in the frame" };
+    return {
+      ok: false,
+      reason: "Move back slightly — your face is too close/cropped in the frame",
+    };
   return { ok: true };
 }

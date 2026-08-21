@@ -70,7 +70,9 @@ export function PhotoUpload({
         return;
       }
       const result = await extractDescriptor(human, img);
-      const gate = strictFraming ? passesProfilePhotoQualityGate(result) : passesQualityGate(result);
+      const gate = strictFraming
+        ? passesProfilePhotoQualityGate(result)
+        : passesQualityGate(result);
       const jpegBase64 = dataUrl.split(",")[1];
       if (!gate.ok || !result) {
         setStatus("error");
