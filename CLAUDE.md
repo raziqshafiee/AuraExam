@@ -90,6 +90,7 @@ VITE_SUPABASE_URL=         # Supabase project URL (import.meta.env)
 VITE_SUPABASE_ANON_KEY=    # Public anon key (import.meta.env)
 SUPABASE_SERVICE_ROLE_KEY= # Service role key (process.env, server-only) — required for admin API
 DATABASE_URL=              # Direct Postgres URL — only needed by migration scripts
+EXAM_SESSION_SECRET=       # Server-only signing secret for exam check-in tokens (process.env)
 ```
 
 ### Data model (key tables)
