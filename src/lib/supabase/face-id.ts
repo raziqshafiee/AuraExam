@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
 import { createAdminClient } from "./admin-client";
 import { writeAudit } from "./audit";
+import { pushNotification } from "./notifications";
 import { cosineSimilarity } from "@/lib/face-id/compare";
 import { nextRegistrationOutcome, canRequestPhotoChange } from "@/lib/face-id/business-rules";
 import { FACE_ID } from "@/lib/constants";
@@ -188,4 +189,153 @@ export const verifyEnrolment = createServerFn({ method: "POST" })
         verification_attempts: FACE_ID.MAX_ENROLL_ATTEMPTS - outcome.attemptsRemaining,
       });
     return { status: "RETRY" as const, score, attemptsRemaining: outcome.attemptsRemaining };
+  });
+
+async function signedFacialProfileUrls(userId: string): Promise<{ photoUrl: string | null; snapshotUrl: string | null }> {
+  const admin = createAdminClient();
+  const { data: files } = await admin.storage.from(FACIAL_PROFILES_BUCKET).list(userId, {
+    limit: 100,
+    sortBy: { column: "name", order: "desc" },
+  });
+  const names = (files ?? []).map((f: any) => f.name);
+  const passportName = names.find((n: string) => n === "passport.jpg");
+  const snapshotName = names.find((n: string) => n.startsWith("review-"));
+
+  const paths = [passportName, snapshotName].filter(Boolean).map((n) => `${userId}/${n}`);
+  if (paths.length === 0) return { photoUrl: null, snapshotUrl: null };
+
+  const { data: signed } = await admin.storage.from(FACIAL_PROFILES_BUCKET).createSignedUrls(paths, 60 * 30);
+  const urlFor = (name?: string) =>
+    name ? (signed ?? []).find((s: any) => s.path === `${userId}/${name}`)?.signedUrl ?? null : null;
+
+  return { photoUrl: urlFor(passportName), snapshotUrl: urlFor(snapshotName) };
+}
+
+// GET: PENDING_REVIEW registrations. Admin sees every profile; a lecturer
+// sees only students enrolled in a class they teach.
+export const getFacialReviewQueue = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { data: me } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+  if (me?.role !== "admin" && me?.role !== "lecturer") throw new Error("Unauthorized");
+
+  const admin = createAdminClient();
+  let query = admin
+    .from("user_facial_profiles")
+    .select("user_id, verification_attempts, profiles!user_id(name, email)")
+    .eq("status", "PENDING_REVIEW");
+
+  if (me.role === "lecturer") {
+    const { data: rosterRows } = await admin
+      .from("class_enrollments")
+      .select("student_id, classes!inner(lecturer_id)")
+      .eq("classes.lecturer_id", user.id);
+    const studentIds = [...new Set((rosterRows ?? []).map((r: any) => r.student_id))];
+    if (studentIds.length === 0) return [];
+    query = query.in("user_id", studentIds);
+  }
+
+  const { data: rows, error } = await query;
+  if (error) throw new Error(error.message);
+
+  return Promise.all(
+    (rows ?? []).map(async (r: any) => {
+      const { photoUrl, snapshotUrl } = await signedFacialProfileUrls(r.user_id);
+      return {
+        userId: r.user_id as string,
+        name: r.profiles?.name ?? "Unknown",
+        email: r.profiles?.email ?? "",
+        photoUrl,
+        snapshotUrl,
+      };
+    }),
+  );
+});
+
+// POST: approve/reject a PENDING_REVIEW registration.
+export const reviewFacialProfile = createServerFn({ method: "POST" })
+  .inputValidator((data: { userId: string; action: "APPROVE" | "REJECT"; reason?: string }) => data)
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const { data: me } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+    if (me?.role !== "admin" && me?.role !== "lecturer") throw new Error("Unauthorized");
+
+    const admin = createAdminClient();
+
+    if (me.role === "lecturer") {
+      const { data: enrolled } = await admin
+        .from("class_enrollments")
+        .select("student_id, classes!inner(lecturer_id)")
+        .eq("student_id", data.userId)
+        .eq("classes.lecturer_id", user.id)
+        .maybeSingle();
+      if (!enrolled) throw new Error("Forbidden");
+    }
+
+    const { data: profile } = await admin
+      .from("user_facial_profiles")
+      .select("status, pending_embedding")
+      .eq("user_id", data.userId)
+      .single();
+    if (!profile || profile.status !== "PENDING_REVIEW") {
+      throw new Error("This profile is not awaiting review.");
+    }
+
+    if (data.action === "APPROVE") {
+      await admin
+        .from("user_facial_profiles")
+        .update({
+          status: "VERIFIED",
+          baseline_embedding: profile.pending_embedding,
+          pending_embedding: null,
+          is_photo_locked: true,
+          approved_by: user.id,
+          last_photo_update: new Date().toISOString(),
+          rejection_reason: null,
+        })
+        .eq("user_id", data.userId);
+      await writeAudit(user.id, {
+        action: `Approved Face ID registration for ${data.userId}`,
+        target: data.userId,
+        category: "identity",
+      });
+      await pushNotification(supabase, {
+        userId: data.userId,
+        type: "face_id_approved",
+        title: "Face ID approved",
+        body: "Your Face ID registration was approved by a reviewer.",
+      }).catch(() => {});
+    } else {
+      await admin
+        .from("user_facial_profiles")
+        .update({
+          status: "REJECTED",
+          pending_embedding: null,
+          rejection_reason: data.reason ?? null,
+          verification_attempts: 0,
+        })
+        .eq("user_id", data.userId);
+      await writeAudit(user.id, {
+        action: `Rejected Face ID registration for ${data.userId}`,
+        target: data.userId,
+        category: "identity",
+      });
+      await pushNotification(supabase, {
+        userId: data.userId,
+        type: "face_id_rejected",
+        title: "Face ID registration rejected",
+        body: data.reason ?? "Please re-register with a clearer photo.",
+      }).catch(() => {});
+    }
+
+    return { ok: true as const };
   });
