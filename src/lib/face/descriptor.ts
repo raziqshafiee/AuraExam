@@ -14,9 +14,16 @@ export type DescriptorResult = {
 
 let dimensionChecked = false;
 
+/**
+ * video accepts a live <video> frame (webcam capture) OR a static <img>
+ * (uploaded card/profile photo) — Human's detect() works on either. Only
+ * antispoof/liveness scores are meaningless on a static image (there's no
+ * motion to analyze); callers extracting from an upload should ignore those
+ * two fields rather than gate on them the way live-capture does.
+ */
 export async function extractDescriptor(
   human: Human,
-  video: HTMLVideoElement,
+  video: HTMLVideoElement | HTMLImageElement,
 ): Promise<DescriptorResult | null> {
   const result = await human.detect(video);
   const faces = result.face ?? [];
@@ -45,8 +52,10 @@ export async function extractDescriptor(
     }
   }
 
+  const frameWidth = "videoWidth" in video ? video.videoWidth : video.naturalWidth;
+  const frameHeight = "videoHeight" in video ? video.videoHeight : video.naturalHeight;
   const [x, y, w, h] = face.box ?? [0, 0, 0, 0];
-  const boxArea = (w * h) / (video.videoWidth * video.videoHeight || 1);
+  const boxArea = (w * h) / (frameWidth * frameHeight || 1);
 
   return {
     descriptor,

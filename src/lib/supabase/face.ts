@@ -7,6 +7,8 @@ import { writeAudit } from "./audit";
 import { getFaceSettings } from "./settings";
 import { cosine, l2normalize, bestMatch, parseVector } from "@/lib/face/similarity";
 import { MODEL_VERSION } from "@/lib/face/human-config";
+import { nameSimilarity, isPlausibleMatric } from "@/lib/face/name-match";
+import { ocrMatricCard } from "@/lib/face/ocr";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
@@ -31,7 +33,9 @@ export function computeAttemptsRemaining(maxAttempts: number, priorRejectedCount
 // POST: issue a randomized, single-use liveness challenge.
 export const faceChallenge = createServerFn({ method: "POST" }).handler(async () => {
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
   const steps = CHALLENGE_STEPS[Math.floor(Math.random() * CHALLENGE_STEPS.length)];
@@ -49,14 +53,19 @@ export const faceChallenge = createServerFn({ method: "POST" }).handler(async ()
 });
 
 type EnrollInput = {
-  embeddingCard: number[] | null; // null for supervised enrollments
-  embeddingSamples: number[][]; // 5 live descriptors
-  matricNo: string;
+  // Card and profile-photo descriptors/images are null/empty ONLY for
+  // supervised enrollments (Task 7) — physical lecturer supervision replaces
+  // both. For the normal (student self-serve) path, both are required.
+  embeddingCard: number[] | null;
+  embeddingProfile: number[] | null;
+  embeddingSamples: number[][]; // live-capture descriptors (liveness-proof side)
+  cardImageBase64: string; // uploaded matric card FRONT photo — OCR'd, then stored as evidence
+  profileImageBase64: string; // uploaded profile/selfie photo — the primary high-quality reference face
+  matricNo: string; // only used on the supervised path (no card to OCR there)
   challengeId: string;
   challengeStepsCompleted: string[];
   antispoofScore: number;
   livenessScore: number;
-  evidenceJpegBase64: string; // co-presence frame (card + face together)
   sessionId?: string; // present only for supervised enrollments (Task 7)
 };
 
@@ -64,7 +73,9 @@ export const faceEnroll = createServerFn({ method: "POST" })
   .inputValidator((data: EnrollInput) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
     const settings = await getFaceSettings();
@@ -104,9 +115,14 @@ export const faceEnroll = createServerFn({ method: "POST" })
       if (new Date(challenge.expires_at) < new Date()) {
         throw new Error("Challenge expired — please retry");
       }
-      const allStepsDone = (challenge.steps as string[]).every((s) => data.challengeStepsCompleted.includes(s));
+      const allStepsDone = (challenge.steps as string[]).every((s) =>
+        data.challengeStepsCompleted.includes(s),
+      );
       if (!allStepsDone) throw new Error("Liveness challenge was not completed");
-      await (admin as any).from("face_challenges").update({ consumed_at: new Date().toISOString() }).eq("id", challenge.id);
+      await (admin as any)
+        .from("face_challenges")
+        .update({ consumed_at: new Date().toISOString() })
+        .eq("id", challenge.id);
     }
 
     // Antispoof/liveness enforced UNCONDITIONALLY — the physical-presence
@@ -115,7 +131,13 @@ export const faceEnroll = createServerFn({ method: "POST" })
     // liveness challenge itself is skipped entirely for supervised
     // enrollments, so this is the only spoof defense left on that path).
     if (data.antispoofScore < settings.antispoofMin || data.livenessScore < settings.livenessMin) {
-      return await recordAttempt(admin, user.id, "Liveness/antispoof check failed", settings, priorRejectedCount);
+      return await recordAttempt(
+        admin,
+        user.id,
+        "Liveness/antispoof check failed",
+        settings,
+        priorRejectedCount,
+      );
     }
 
     // 2. Supervised-window validation, if this is a supervised enrollment
@@ -131,22 +153,31 @@ export const faceEnroll = createServerFn({ method: "POST" })
       const scopedToMe =
         session?.target_user === user.id ||
         (session?.class_id &&
-          (await (admin as any)
-            .from("class_enrollments")
-            .select("student_id")
-            .eq("class_id", session.class_id)
-            .eq("student_id", user.id)
-            .maybeSingle()).data);
-      if (!windowOpen || !scopedToMe) throw new Error("No open supervised verification window applies to you");
+          (
+            await (admin as any)
+              .from("class_enrollments")
+              .select("student_id")
+              .eq("class_id", session.class_id)
+              .eq("student_id", user.id)
+              .maybeSingle()
+          ).data);
+      if (!windowOpen || !scopedToMe)
+        throw new Error("No open supervised verification window applies to you");
       supervisorId = session.opened_by ?? null;
     }
 
-    // 3. Duplicate scan — this reference embedding vs every OTHER active
-    // enrollment, via pgvector <=> (cosine distance = 1 - cosine similarity).
+    // 3. Reference embedding: the uploaded profile photo when there is one
+    // (higher quality, "compulsory for accuracy" per design) — the mean of
+    // the live-capture samples only for the supervised path, which has no
+    // profile photo. Duplicate scan runs against this same reference.
     const meanRef = l2normalize(
-      data.embeddingSamples[0].map((_, i) => data.embeddingSamples.reduce((s, v) => s + v[i], 0) / data.embeddingSamples.length)
+      data.embeddingSamples[0].map(
+        (_, i) =>
+          data.embeddingSamples.reduce((s, v) => s + v[i], 0) / data.embeddingSamples.length,
+      ),
     );
-    const vectorLiteral = `[${meanRef.join(",")}]`;
+    const referenceVec = data.embeddingProfile ? l2normalize(data.embeddingProfile) : meanRef;
+    const vectorLiteral = `[${referenceVec.join(",")}]`;
     const { data: dupRows } = await (admin as any).rpc("face_find_duplicates", {
       probe: vectorLiteral,
       exclude_user: user.id,
@@ -168,63 +199,123 @@ export const faceEnroll = createServerFn({ method: "POST" })
       });
       await writeAudit(user.id, {
         action: "Duplicate face enrollment blocked",
-        target: `matric ${data.matricNo}`,
+        target: user.id,
         category: "identity",
       });
-      throw new Error("This face is already enrolled under a different account. Contact an administrator.");
+      throw new Error(
+        "This face is already enrolled under a different account. Contact an administrator.",
+      );
     }
 
-    // 4. Score card<->live (skip for supervised — no card was captured)
-    let cardLiveScore: number | null = null;
-    if (data.embeddingCard) {
-      cardLiveScore = cosine(l2normalize(data.embeddingCard), meanRef);
+    // 4. Two face-similarity scores for the non-supervised path:
+    //   cardProfileScore — card photo vs profile photo (sanity check: is the
+    //     card actually a photo of the same person as the profile photo?).
+    //     Unlike the old design, a HIGH score here is expected and good —
+    //     the old SUSPICIOUS_CARD_LIVE_SCORE guard existed only because the
+    //     old "card step" was just another live face capture with no real
+    //     card provenance; now the card is a genuinely uploaded ID photo,
+    //     verified separately by OCR, so near-1.0 similarity is the normal
+    //     case for a real card, not a spoof signal.
+    //   profileLiveScore — profile photo vs live-capture samples (the
+    //     primary accuracy-driving score liveness capture exists to prove).
+    let cardProfileScore: number | null = null;
+    let profileLiveScore: number | null = null;
+    if (data.embeddingCard && data.embeddingProfile) {
+      cardProfileScore = cosine(
+        l2normalize(data.embeddingCard),
+        l2normalize(data.embeddingProfile),
+      );
+    }
+    if (data.embeddingProfile) {
+      profileLiveScore = cosine(l2normalize(data.embeddingProfile), meanRef);
     }
 
-    // 5. Band-route.
-    //
-    // SUSPICIOUS_CARD_LIVE_SCORE guards against the "card" step being an
-    // ordinary face capture with nothing card-related actually checked: a
-    // student who shows their own face for BOTH the "card" step and the
-    // "live" step gets cardLiveScore ≈ 1.0 (comparing a face to itself). A
-    // real ID card photo (printed, laminated, glare-prone, possibly
-    // outdated) should essentially never score near-perfect against a live
-    // capture of the same person — a score this high is itself the signal
-    // something's off, most likely that the "card" step also just captured
-    // a live face. Route it to pending for human review instead of
-    // auto-approving, even though it would otherwise clear autoApproveThreshold.
-    const SUSPICIOUS_CARD_LIVE_SCORE = 0.98;
+    // 5. OCR the uploaded card (front only — see ocr.ts) and cross-check
+    // against the student's existing profile name. The matric number has no
+    // typed value to compare against anymore — it's read straight off the
+    // card and saved as-is once approved; isPlausibleMatric only guards
+    // against saving OCR noise as if it were a real matric number.
+    let ocrName: string | null = null;
+    let ocrMatric: string | null = null;
+    let ocrOk = false;
+    if (!isSupervised && data.cardImageBase64) {
+      const cardBytes = Buffer.from(data.cardImageBase64, "base64");
+      const ocr = await ocrMatricCard(cardBytes);
+      ocrName = ocr.name;
+      ocrMatric = ocr.matricNo;
+      const { data: profileRow } = await (admin as any)
+        .from("profiles")
+        .select("name")
+        .eq("id", user.id)
+        .single();
+      const nameOk =
+        !!ocrName && !!profileRow?.name && nameSimilarity(ocrName, profileRow.name) >= 0.6;
+      const matricOk = !!ocrMatric && isPlausibleMatric(ocrMatric);
+      ocrOk = nameOk && matricOk;
+    }
+
+    // 6. Band-route.
     let status: "active" | "pending" | "rejected";
+    let pendingReason: "face_score" | "ocr_mismatch" | null = null;
     if (isSupervised) {
       status = "active";
-    } else if (cardLiveScore! >= SUSPICIOUS_CARD_LIVE_SCORE) {
+    } else if (!ocrOk) {
+      // Can't confirm this really is the student's own card — a human (the
+      // student's lecturer, who can vouch for a typo or a blurry photo)
+      // needs to look at it, not an auto-reject.
       status = "pending";
-    } else if (cardLiveScore! >= settings.autoApproveThreshold) {
+      pendingReason = "ocr_mismatch";
+    } else if (cardProfileScore !== null && cardProfileScore < settings.reviewThreshold) {
+      // OCR passed but the card photo doesn't look like the same person as
+      // the profile photo — needs a human face-comparison call.
+      status = "pending";
+      pendingReason = "face_score";
+    } else if (profileLiveScore! >= settings.autoApproveThreshold) {
       status = "active";
-    } else if (cardLiveScore! >= settings.reviewThreshold) {
+    } else if (profileLiveScore! >= settings.reviewThreshold) {
       status = "pending";
+      pendingReason = "face_score";
     } else {
       status = "rejected";
     }
 
-    // 6. Evidence upload (co-presence frame). Retained for the normal
-    // retention window regardless of outcome — not only for pending/rejected
-    // — so there's always something for an admin or appeal process to check,
-    // even for auto-approved enrollments (this is what would have caught a
-    // same-face-twice spoof that otherwise sails straight to "active" with
-    // no evidence left behind). Only applies to the non-supervised (card)
-    // path — evidenceJpegBase64 is sent empty for supervised enrollments
-    // since no card step ever ran. The existing facePurge sweep still cleans
-    // this up after settings.evidenceRetentionDays regardless of status.
-    let evidencePath: string | null = null;
-    if (!isSupervised && data.evidenceJpegBase64) {
-      evidencePath = `${user.id}/enrollment/${Date.now()}.jpg`;
-      const bytes = Uint8Array.from(atob(data.evidenceJpegBase64), (c) => c.charCodeAt(0));
-      await (admin as any).storage.from("identity-evidence").upload(evidencePath, bytes, { contentType: "image/jpeg" });
+    // 7. Evidence upload — the card photo and profile photo themselves
+    // (replacing the old co-presence frame). Retained for the normal
+    // retention window regardless of outcome, same rationale as before:
+    // there's always something for a reviewer to check, even for
+    // auto-approved enrollments. Supervised enrollments upload neither (no
+    // card/profile step ever ran). The existing facePurge sweep is extended
+    // below to clean these up after settings.evidenceRetentionDays.
+    let cardImagePath: string | null = null;
+    let profileImagePath: string | null = null;
+    if (!isSupervised) {
+      if (data.cardImageBase64) {
+        cardImagePath = `${user.id}/enrollment/card-${Date.now()}.jpg`;
+        const bytes = Uint8Array.from(atob(data.cardImageBase64), (c) => c.charCodeAt(0));
+        await (admin as any).storage
+          .from("identity-evidence")
+          .upload(cardImagePath, bytes, { contentType: "image/jpeg" });
+      }
+      if (data.profileImageBase64) {
+        profileImagePath = `${user.id}/enrollment/profile-${Date.now()}.jpg`;
+        const bytes = Uint8Array.from(atob(data.profileImageBase64), (c) => c.charCodeAt(0));
+        await (admin as any).storage
+          .from("identity-evidence")
+          .upload(profileImagePath, bytes, { contentType: "image/jpeg" });
+      }
     }
+    const evidenceExpiresAt =
+      cardImagePath || profileImagePath
+        ? new Date(Date.now() + settings.evidenceRetentionDays * 86_400_000).toISOString()
+        : null;
 
-    // 7. Supersede any prior active enrollment for this user, then insert.
+    // 8. Supersede any prior active enrollment for this user, then insert.
     if (status === "active") {
-      await (admin as any).from("face_enrollments").update({ status: "superseded" }).eq("user_id", user.id).eq("status", "active");
+      await (admin as any)
+        .from("face_enrollments")
+        .update({ status: "superseded" })
+        .eq("user_id", user.id)
+        .eq("status", "active");
     }
 
     const { error: insertErr } = await (admin as any).from("face_enrollments").insert({
@@ -233,10 +324,14 @@ export const faceEnroll = createServerFn({ method: "POST" })
       embedding_reference: vectorLiteral,
       embedding_samples: data.embeddingSamples.map((s) => `[${s.join(",")}]`),
       model_version: MODEL_VERSION,
-      card_live_score: cardLiveScore,
+      card_live_score: cardProfileScore,
+      profile_live_score: profileLiveScore,
       antispoof_score: data.antispoofScore,
       liveness_score: data.livenessScore,
+      ocr_name_extracted: ocrName,
+      ocr_matric_extracted: ocrMatric,
       status,
+      pending_reason: pendingReason,
       session_id: data.sessionId ?? null,
       // The lecturer who opened the window (fetched above), NOT the
       // student's own id — this is the one audit trail that should record
@@ -244,17 +339,36 @@ export const faceEnroll = createServerFn({ method: "POST" })
       supervised_by: isSupervised ? supervisorId : null,
       consent_at: new Date().toISOString(),
       consent_version: "v1",
-      evidence_path: evidencePath,
-      evidence_expires_at: evidencePath ? new Date(Date.now() + settings.evidenceRetentionDays * 86_400_000).toISOString() : null,
+      card_image_path: cardImagePath,
+      profile_image_path: profileImagePath,
+      evidence_expires_at: evidenceExpiresAt,
     });
     if (insertErr) throw new Error(insertErr.message);
 
-    if (data.matricNo) {
+    // matric_no is only ever written from a verified source: OCR (once the
+    // card was confirmed to belong to this student) for the normal path, or
+    // the typed value on the supervised path (no card exists to OCR there,
+    // physical supervision is the trust source instead).
+    if (isSupervised && data.matricNo) {
       await (admin as any).from("profiles").update({ matric_no: data.matricNo }).eq("id", user.id);
+    } else if (status === "active" && ocrMatric) {
+      await (admin as any).from("profiles").update({ matric_no: ocrMatric }).eq("id", user.id);
     }
 
     if (status === "active") {
-      await pushNotification(supabase, { userId: user.id, type: "identity_verified", title: "Identity verified", body: "Face Match enrollment complete." });
+      await pushNotification(supabase, {
+        userId: user.id,
+        type: "identity_verified",
+        title: "Identity verified",
+        body: "Face Match enrollment complete.",
+      });
+    } else if (pendingReason === "ocr_mismatch") {
+      await notifyStudentClassLecturers(admin, user.id, {
+        type: "identity_ocr_review",
+        title: "A student's card needs a manual check",
+        body: "We couldn't automatically confirm a student's uploaded matric card — please review it.",
+        link: "/lecturer/identity-sessions",
+      });
     }
 
     // Highest-trust action in the whole feature — a lecturer authorized
@@ -271,6 +385,9 @@ export const faceEnroll = createServerFn({ method: "POST" })
 
     return {
       status,
+      pendingReason,
+      ocrName,
+      ocrMatric,
       attemptsRemaining:
         status === "rejected"
           ? computeAttemptsRemaining(settings.maxAttempts, priorRejectedCount)
@@ -278,23 +395,111 @@ export const faceEnroll = createServerFn({ method: "POST" })
     };
   });
 
+// Best-effort fan-out to every lecturer teaching a class this student is
+// enrolled in — face_enrollments isn't scoped to a class/exam, so an
+// OCR-mismatch review has no single "owning" lecturer the way a supervised
+// session does; every lecturer who could plausibly vouch for this student
+// gets notified. Never throws — mirrors notifyIdentityUnverified below.
+async function notifyStudentClassLecturers(
+  admin: any,
+  studentId: string,
+  params: { type: string; title: string; body: string; link?: string },
+) {
+  try {
+    const { data: enrollments } = await admin
+      .from("class_enrollments")
+      .select("class_id")
+      .eq("student_id", studentId);
+    const classIds = [...new Set((enrollments ?? []).map((e: any) => e.class_id))];
+    if (classIds.length === 0) return;
+    const { data: classes } = await admin.from("classes").select("lecturer_id").in("id", classIds);
+    const lecturerIds = [
+      ...new Set((classes ?? []).map((c: any) => c.lecturer_id).filter(Boolean)),
+    ];
+    for (const lecturerId of lecturerIds) {
+      await admin.from("notifications").insert({
+        user_id: lecturerId,
+        type: params.type,
+        title: params.title,
+        body: params.body,
+        link: params.link ?? null,
+      });
+    }
+  } catch {
+    // Best-effort — a notification failure must never block enrollment.
+  }
+}
+
 // GET: admin review queue — oldest first
 export const getFaceReviewQueue = createServerFn({ method: "GET" }).handler(async () => {
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
-  const { data: profile } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+  const { data: profile } = await db(supabase)
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
   if (profile?.role !== "admin") throw new Error("Forbidden");
 
   const admin = createAdminClient();
   const { data, error } = await (admin as any)
     .from("face_enrollments")
-    .select("id, user_id, card_live_score, evidence_path, created_at")
+    .select(
+      "id, user_id, card_live_score, profile_live_score, evidence_path, card_image_path, profile_image_path, ocr_name_extracted, ocr_matric_extracted, pending_reason, created_at",
+    )
     .eq("status", "pending")
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
 
-  const rows = data ?? [];
+  return mapReviewRows(admin, data ?? []);
+});
+
+// GET: lecturer review queue — pending enrollments routed here specifically
+// because OCR couldn't confirm the uploaded card (pending_reason =
+// 'ocr_mismatch'), scoped to lecturers who teach a class the student is
+// enrolled in. Face-score-borderline pendings stay admin-only — see
+// notifyStudentClassLecturers' comment for why there's no single "owning"
+// lecturer to scope a narrower query to.
+export const getLecturerFaceReviewQueue = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { data: myClasses } = await db(supabase)
+    .from("classes")
+    .select("id")
+    .eq("lecturer_id", user.id);
+  const classIds = (myClasses ?? []).map((c: any) => c.id);
+  if (classIds.length === 0) return [];
+
+  const { data: enrollments } = await db(supabase)
+    .from("class_enrollments")
+    .select("student_id")
+    .in("class_id", classIds);
+  const studentIds = [...new Set((enrollments ?? []).map((e: any) => e.student_id))];
+  if (studentIds.length === 0) return [];
+
+  const admin = createAdminClient();
+  const { data, error } = await (admin as any)
+    .from("face_enrollments")
+    .select(
+      "id, user_id, card_live_score, profile_live_score, evidence_path, card_image_path, profile_image_path, ocr_name_extracted, ocr_matric_extracted, pending_reason, created_at",
+    )
+    .eq("status", "pending")
+    .eq("pending_reason", "ocr_mismatch")
+    .in("user_id", studentIds)
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+
+  return mapReviewRows(admin, data ?? []);
+});
+
+async function mapReviewRows(admin: any, rows: any[]) {
   // Manual join, not a PostgREST embed: face_enrollments.user_id references
   // auth.users(id), not profiles(id), so `profiles!user_id(...)` cannot be
   // resolved by PostgREST's relationship inference (unlike e.g. audit_log,
@@ -303,7 +508,7 @@ export const getFaceReviewQueue = createServerFn({ method: "GET" }).handler(asyn
   // relationship between 'face_enrollments' and 'profiles'".
   const userIds = [...new Set(rows.map((r: any) => r.user_id))];
   const { data: profiles } = userIds.length
-    ? await (admin as any).from("profiles").select("id, name, matric_no").in("id", userIds)
+    ? await admin.from("profiles").select("id, name, matric_no").in("id", userIds)
     : { data: [] };
   const profileById = new Map((profiles ?? []).map((p: any) => [p.id, p]));
 
@@ -313,51 +518,124 @@ export const getFaceReviewQueue = createServerFn({ method: "GET" }).handler(asyn
       id: r.id,
       studentName: p?.name ?? "Unknown",
       matricNo: p?.matric_no ?? "",
-      similarity: r.card_live_score,
-      evidencePath: r.evidence_path,
+      similarity: r.profile_live_score ?? r.card_live_score,
+      cardProfileScore: r.card_live_score,
+      cardImagePath: r.card_image_path ?? r.evidence_path,
+      profileImagePath: r.profile_image_path,
+      ocrName: r.ocr_name_extracted,
+      ocrMatric: r.ocr_matric_extracted,
+      pendingReason: r.pending_reason ?? "face_score",
       createdAt: r.created_at,
     };
   });
-});
+}
 
-// POST: admin approve/reject — evidence deleted on EITHER outcome.
+// POST: admin OR (for ocr_mismatch rows only) the student's class lecturer
+// approve/reject — evidence deleted on EITHER outcome.
 export const faceReview = createServerFn({ method: "POST" })
-  .inputValidator((data: { enrollmentId: string; decision: "approve" | "reject"; reason?: string }) => data)
+  .inputValidator(
+    (data: { enrollmentId: string; decision: "approve" | "reject"; reason?: string }) => data,
+  )
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
-    const { data: profile } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
-    if (profile?.role !== "admin") throw new Error("Forbidden");
+    const { data: profile } = await db(supabase)
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
 
     const admin = createAdminClient();
     const { data: enrollment } = await (admin as any)
       .from("face_enrollments")
-      .select("id, user_id, evidence_path, status")
+      .select(
+        "id, user_id, evidence_path, card_image_path, profile_image_path, ocr_matric_extracted, pending_reason, status",
+      )
       .eq("id", data.enrollmentId)
       .single();
-    if (!enrollment || enrollment.status !== "pending") throw new Error("This enrollment is not awaiting review");
+    if (!enrollment || enrollment.status !== "pending")
+      throw new Error("This enrollment is not awaiting review");
+
+    const isAdmin = profile?.role === "admin";
+    if (!isAdmin) {
+      // Non-admin callers must be a lecturer, reviewing an ocr_mismatch row,
+      // for a student enrolled in one of their classes.
+      if (profile?.role !== "lecturer" || enrollment.pending_reason !== "ocr_mismatch")
+        throw new Error("Forbidden");
+      const { data: myClasses } = await db(supabase)
+        .from("classes")
+        .select("id")
+        .eq("lecturer_id", user.id);
+      const classIds = (myClasses ?? []).map((c: any) => c.id);
+      const { data: scoped } = classIds.length
+        ? await (admin as any)
+            .from("class_enrollments")
+            .select("student_id")
+            .in("class_id", classIds)
+            .eq("student_id", enrollment.user_id)
+            .maybeSingle()
+        : { data: null };
+      if (!scoped)
+        throw new Error("Forbidden — this student is not enrolled in any of your classes");
+    }
 
     const newStatus = data.decision === "approve" ? "active" : "rejected";
     if (newStatus === "active") {
-      await (admin as any).from("face_enrollments").update({ status: "superseded" }).eq("user_id", enrollment.user_id).eq("status", "active");
+      await (admin as any)
+        .from("face_enrollments")
+        .update({ status: "superseded" })
+        .eq("user_id", enrollment.user_id)
+        .eq("status", "active");
     }
     await (admin as any)
       .from("face_enrollments")
-      .update({ status: newStatus, reviewed_by: user.id, reviewed_at: new Date().toISOString(), reject_reason: data.reason ?? null, evidence_path: null })
+      .update({
+        status: newStatus,
+        reviewed_by: user.id,
+        reviewed_at: new Date().toISOString(),
+        reject_reason: data.reason ?? null,
+        evidence_path: null,
+        card_image_path: null,
+        profile_image_path: null,
+      })
       .eq("id", data.enrollmentId);
 
-    if (enrollment.evidence_path) {
-      await (admin as any).storage.from("identity-evidence").remove([enrollment.evidence_path]);
+    // Approval here is the same "band-routing landed on active" event
+    // faceEnroll itself handles inline — matric_no wasn't persisted yet
+    // because this row went to pending instead of active at enrollment time.
+    if (newStatus === "active" && enrollment.ocr_matric_extracted) {
+      await (admin as any)
+        .from("profiles")
+        .update({ matric_no: enrollment.ocr_matric_extracted })
+        .eq("id", enrollment.user_id);
+    }
+
+    const pathsToDelete = [
+      enrollment.evidence_path,
+      enrollment.card_image_path,
+      enrollment.profile_image_path,
+    ].filter(Boolean);
+    if (pathsToDelete.length > 0) {
+      await (admin as any).storage.from("identity-evidence").remove(pathsToDelete);
     }
 
     await pushNotification(supabase, {
       userId: enrollment.user_id,
       type: "identity_reviewed",
       title: newStatus === "active" ? "Identity verified" : "Identity verification rejected",
-      body: newStatus === "active" ? "Your Face Match enrollment was approved." : (data.reason ?? "Please contact your lecturer for supervised verification."),
+      body:
+        newStatus === "active"
+          ? "Your Face Match enrollment was approved."
+          : (data.reason ?? "Please contact your lecturer for supervised verification."),
     });
-    await writeAudit(user.id, { action: `${newStatus === "active" ? "Approved" : "Rejected"} face enrollment`, target: enrollment.user_id, category: "identity" });
+    await writeAudit(user.id, {
+      action: `${newStatus === "active" ? "Approved" : "Rejected"} face enrollment`,
+      target: enrollment.user_id,
+      category: "identity",
+    });
 
     return { success: true as const };
   });
@@ -367,16 +645,41 @@ export const getFaceEvidenceUrl = createServerFn({ method: "GET" })
   .inputValidator((path: string) => path)
   .handler(async ({ data: path }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
-    const { data: profile } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+    const { data: profile } = await db(supabase)
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
     const ownerId = path.split("/")[0];
     const isOwner = ownerId === user.id;
     const isAdmin = profile?.role === "admin";
-    if (!isOwner && !isAdmin) throw new Error("Forbidden");
+    let isScopedLecturer = false;
+    if (!isOwner && !isAdmin && profile?.role === "lecturer") {
+      const { data: myClasses } = await db(supabase)
+        .from("classes")
+        .select("id")
+        .eq("lecturer_id", user.id);
+      const classIds = (myClasses ?? []).map((c: any) => c.id);
+      if (classIds.length > 0) {
+        const { data: scoped } = await db(supabase)
+          .from("class_enrollments")
+          .select("student_id")
+          .in("class_id", classIds)
+          .eq("student_id", ownerId)
+          .maybeSingle();
+        isScopedLecturer = !!scoped;
+      }
+    }
+    if (!isOwner && !isAdmin && !isScopedLecturer) throw new Error("Forbidden");
 
     const admin = createAdminClient();
-    const { data: signed, error } = await (admin as any).storage.from("identity-evidence").createSignedUrl(path, 300);
+    const { data: signed, error } = await (admin as any).storage
+      .from("identity-evidence")
+      .createSignedUrl(path, 300);
     if (error) throw new Error(error.message);
     return { url: signed.signedUrl as string };
   });
@@ -409,9 +712,15 @@ export const facePurge = createServerFn({ method: "POST" }).handler(async () => 
   // function permanently deletes evidence photos from storage. Defense in
   // depth for a privileged, irreversible operation.
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
-  const { data: profile } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+  const { data: profile } = await db(supabase)
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
   if (profile?.role !== "admin") throw new Error("Forbidden");
 
   const admin = createAdminClient();
@@ -420,14 +729,22 @@ export const facePurge = createServerFn({ method: "POST" }).handler(async () => 
 
   const { data: staleEnrollments } = await (admin as any)
     .from("face_enrollments")
-    .select("id, evidence_path")
-    .not("evidence_path", "is", null)
+    .select("id, evidence_path, card_image_path, profile_image_path")
+    .or("evidence_path.not.is.null,card_image_path.not.is.null,profile_image_path.not.is.null")
     .lt("created_at", cutoff);
 
-  const enrollmentPaths = (staleEnrollments ?? []).map((r: any) => r.evidence_path).filter(Boolean);
+  const enrollmentPaths = (staleEnrollments ?? [])
+    .flatMap((r: any) => [r.evidence_path, r.card_image_path, r.profile_image_path])
+    .filter(Boolean);
   if (enrollmentPaths.length > 0) {
     await (admin as any).storage.from("identity-evidence").remove(enrollmentPaths);
-    await (admin as any).from("face_enrollments").update({ evidence_path: null }).in("id", (staleEnrollments ?? []).map((r: any) => r.id));
+    await (admin as any)
+      .from("face_enrollments")
+      .update({ evidence_path: null, card_image_path: null, profile_image_path: null })
+      .in(
+        "id",
+        (staleEnrollments ?? []).map((r: any) => r.id),
+      );
   }
 
   const { data: staleVerifications } = await (admin as any)
@@ -436,10 +753,18 @@ export const facePurge = createServerFn({ method: "POST" }).handler(async () => 
     .not("evidence_path", "is", null)
     .lt("created_at", cutoff);
 
-  const verificationPaths = (staleVerifications ?? []).map((r: any) => r.evidence_path).filter(Boolean);
+  const verificationPaths = (staleVerifications ?? [])
+    .map((r: any) => r.evidence_path)
+    .filter(Boolean);
   if (verificationPaths.length > 0) {
     await (admin as any).storage.from("identity-evidence").remove(verificationPaths);
-    await (admin as any).from("face_verifications").update({ evidence_path: null }).in("id", (staleVerifications ?? []).map((r: any) => r.id));
+    await (admin as any)
+      .from("face_verifications")
+      .update({ evidence_path: null })
+      .in(
+        "id",
+        (staleVerifications ?? []).map((r: any) => r.id),
+      );
   }
 
   return { purged: enrollmentPaths.length + verificationPaths.length };
@@ -467,15 +792,24 @@ async function notifyIdentityUnverified(
   examId: string,
 ) {
   try {
-    const { data: examRow } = await admin.from("exams").select("title, classes(lecturer_id)").eq("id", examId).single();
+    const { data: examRow } = await admin
+      .from("exams")
+      .select("title, classes(lecturer_id)")
+      .eq("id", examId)
+      .single();
     await pushNotification(supabase, {
-      userId, type: "identity_unverified", title: "Identity could not be confirmed",
+      userId,
+      type: "identity_unverified",
+      title: "Identity could not be confirmed",
       body: `We couldn't confirm your identity for "${examRow?.title}". You may still continue — your lecturer has been notified.`,
     }).catch(() => {});
     if (examRow?.classes?.lecturer_id) {
       await pushNotification(supabase, {
-        userId: examRow.classes.lecturer_id, type: "identity_unverified", title: "Student identity unverified",
-        body: `A student's identity could not be confirmed for "${examRow.title}".`, link: `/lecturer/exams/${examId}/monitor`,
+        userId: examRow.classes.lecturer_id,
+        type: "identity_unverified",
+        title: "Student identity unverified",
+        body: `A student's identity could not be confirmed for "${examRow.title}".`,
+        link: `/lecturer/exams/${examId}/monitor`,
       }).catch(() => {});
     }
   } catch {
@@ -487,7 +821,9 @@ export const faceVerify = createServerFn({ method: "POST" })
   .inputValidator((data: VerifyInput) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
     const settings = await getFaceSettings();
@@ -502,10 +838,19 @@ export const faceVerify = createServerFn({ method: "POST" })
 
     if (!enrollment) {
       await notifyIdentityUnverified(supabase, admin, user.id, data.examId);
-      return { passed: false, similarity: 0, attemptsRemaining: 0, elevated: true, guidance: "No active enrollment — open \"Face Match\" from the nav menu to enroll first." };
+      return {
+        passed: false,
+        similarity: 0,
+        attemptsRemaining: 0,
+        elevated: true,
+        guidance: 'No active enrollment — open "Face Match" from the nav menu to enroll first.',
+      };
     }
 
-    const refs = [parseVector(enrollment.embedding_reference), ...(enrollment.embedding_samples ?? []).map(parseVector)];
+    const refs = [
+      parseVector(enrollment.embedding_reference),
+      ...(enrollment.embedding_samples ?? []).map(parseVector),
+    ];
     const similarities = data.embeddings.map((e) => bestMatch(e, refs));
     const similarity = Math.max(...similarities);
     const threshold = settings.liveThreshold;
@@ -528,7 +873,9 @@ export const faceVerify = createServerFn({ method: "POST" })
     if (!passed && data.evidenceJpegBase64) {
       evidencePath = `${user.id}/${data.context}/${Date.now()}.jpg`;
       const bytes = Uint8Array.from(atob(data.evidenceJpegBase64), (c) => c.charCodeAt(0));
-      await (admin as any).storage.from("identity-evidence").upload(evidencePath, bytes, { contentType: "image/jpeg" });
+      await (admin as any).storage
+        .from("identity-evidence")
+        .upload(evidencePath, bytes, { contentType: "image/jpeg" });
     }
 
     await (admin as any).from("face_verifications").insert({
@@ -568,8 +915,13 @@ export const faceVerify = createServerFn({ method: "POST" })
     }
 
     return {
-      passed, similarity: Math.round(similarity * 1000) / 1000, attemptsRemaining, elevated,
-      guidance: passed ? undefined : "Try more light, remove your cap/sunglasses, and face the camera directly.",
+      passed,
+      similarity: Math.round(similarity * 1000) / 1000,
+      attemptsRemaining,
+      elevated,
+      guidance: passed
+        ? undefined
+        : "Try more light, remove your cap/sunglasses, and face the camera directly.",
     };
   });
 
@@ -580,7 +932,9 @@ export const faceBindSession = createServerFn({ method: "POST" })
   .inputValidator((data: { submissionId: string; examId: string }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
     const admin = createAdminClient();
@@ -596,7 +950,10 @@ export const faceBindSession = createServerFn({ method: "POST" })
       .maybeSingle();
 
     if (lobbyRow) {
-      await (admin as any).from("face_verifications").update({ submission_id: data.submissionId }).eq("id", lobbyRow.id);
+      await (admin as any)
+        .from("face_verifications")
+        .update({ submission_id: data.submissionId })
+        .eq("id", lobbyRow.id);
     }
     return { elevated: lobbyRow ? !lobbyRow.passed : false };
   });
@@ -609,15 +966,23 @@ export const faceBindSession = createServerFn({ method: "POST" })
 // Task 1's fes_lecturer_all RLS policy (`opened_by = auth.uid()`) permits
 // this directly, so there's no need to bypass RLS here.
 export const openEnrollmentSession = createServerFn({ method: "POST" })
-  .inputValidator((data: { classId?: string; targetUserId?: string; durationMinutes?: number }) => data)
+  .inputValidator(
+    (data: { classId?: string; targetUserId?: string; durationMinutes?: number }) => data,
+  )
   .handler(async ({ data }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
     if (!data.classId && !data.targetUserId) throw new Error("classId or targetUserId is required");
 
     if (data.classId) {
-      const { data: cls } = await db(supabase).from("classes").select("lecturer_id").eq("id", data.classId).single();
+      const { data: cls } = await db(supabase)
+        .from("classes")
+        .select("lecturer_id")
+        .eq("id", data.classId)
+        .single();
       if (cls?.lecturer_id !== user.id) throw new Error("Forbidden — you do not own this class");
     }
 
@@ -649,13 +1014,19 @@ export const openEnrollmentSession = createServerFn({ method: "POST" })
           .eq("lecturer_id", user.id);
         ownsAny = (ownedClasses ?? []).length > 0;
       }
-      if (!ownsAny) throw new Error("Forbidden — this student is not enrolled in any of your classes");
+      if (!ownsAny)
+        throw new Error("Forbidden — this student is not enrolled in any of your classes");
     }
 
     const expiresAt = new Date(Date.now() + (data.durationMinutes ?? 30) * 60_000).toISOString();
     const { data: session, error } = await db(supabase)
       .from("face_enrollment_sessions")
-      .insert({ class_id: data.classId ?? null, target_user: data.targetUserId ?? null, opened_by: user.id, expires_at: expiresAt })
+      .insert({
+        class_id: data.classId ?? null,
+        target_user: data.targetUserId ?? null,
+        opened_by: user.id,
+        expires_at: expiresAt,
+      })
       .select("id, expires_at")
       .single();
     if (error) throw new Error(error.message);
@@ -668,9 +1039,15 @@ export const closeEnrollmentSession = createServerFn({ method: "POST" })
   .inputValidator((sessionId: string) => sessionId)
   .handler(async ({ data: sessionId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
-    await db(supabase).from("face_enrollment_sessions").update({ closed_at: new Date().toISOString() }).eq("id", sessionId).eq("opened_by", user.id);
+    await db(supabase)
+      .from("face_enrollment_sessions")
+      .update({ closed_at: new Date().toISOString() })
+      .eq("id", sessionId)
+      .eq("opened_by", user.id);
     return { success: true as const };
   });
 
@@ -682,7 +1059,9 @@ export const getEnrollmentSessionRoster = createServerFn({ method: "GET" })
   .inputValidator((classId: string) => classId)
   .handler(async ({ data: classId }) => {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
     const { data: enrollments } = await db(supabase)
@@ -691,11 +1070,16 @@ export const getEnrollmentSessionRoster = createServerFn({ method: "GET" })
       .eq("class_id", classId);
 
     const admin = createAdminClient();
-    const { data: active } = await (admin as any).from("face_enrollments").select("user_id").eq("status", "active");
+    const { data: active } = await (admin as any)
+      .from("face_enrollments")
+      .select("user_id")
+      .eq("status", "active");
     const enrolledIds = new Set((active ?? []).map((r: any) => r.user_id));
 
     return (enrollments ?? []).map((e: any) => ({
-      studentId: e.student_id, name: e.profiles?.name ?? "Unknown", enrolled: enrolledIds.has(e.student_id),
+      studentId: e.student_id,
+      name: e.profiles?.name ?? "Unknown",
+      enrolled: enrolledIds.has(e.student_id),
     }));
   });
 
@@ -709,7 +1093,9 @@ export const getEnrollmentSessionRoster = createServerFn({ method: "GET" })
 // whether it can skip straight to live-capture or must still collect it.
 export const getOpenSessionForMe = createServerFn({ method: "GET" }).handler(async () => {
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
   const nowIso = new Date().toISOString();
@@ -722,7 +1108,11 @@ export const getOpenSessionForMe = createServerFn({ method: "GET" }).handler(asy
     .limit(1)
     .maybeSingle();
 
-  const { data: profile } = await db(supabase).from("profiles").select("matric_no").eq("id", user.id).maybeSingle();
+  const { data: profile } = await db(supabase)
+    .from("profiles")
+    .select("matric_no")
+    .eq("id", user.id)
+    .maybeSingle();
 
   return {
     sessionId: session?.id ?? null,

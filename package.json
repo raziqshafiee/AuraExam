@@ -33,6 +33,7 @@
     "migrate:exam-lifecycle": "tsx scripts/migrate-exam-lifecycle.ts",
     "migrate:notifications": "tsx scripts/migrate-notifications.ts",
     "migrate:face-verification": "tsx scripts/migrate-face-verification.ts",
+    "migrate:face-verification-v2": "tsx scripts/migrate-face-verification-v2.ts",
     "migrate:grade-config": "tsx scripts/migrate-grade-config.ts",
     "migrate:exam-shuffle": "tsx scripts/migrate-exam-shuffle.ts",
     "migrate:profile-trigger": "tsx scripts/migrate-profile-trigger.ts"
@@ -97,6 +98,7 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.1",
+    "tesseract.js": "^5.1.1",
     "tw-animate-css": "^1.3.4",
     "vaul": "^1.1.2",
     "vite-tsconfig-paths": "^6.0.2",
