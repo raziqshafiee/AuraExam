@@ -12,6 +12,8 @@ import {
   getLecturerFaceReviewQueue,
   faceReview,
   getFaceEvidenceUrl,
+  getIdentityCheckinQueue,
+  decideIdentityCheckin,
 } from "@/lib/supabase/face";
 
 export const Route = createFileRoute("/_authenticated/lecturer/identity-sessions")({
@@ -19,18 +21,24 @@ export const Route = createFileRoute("/_authenticated/lecturer/identity-sessions
   loader: async () => ({
     classes: await getLecturerClasses(),
     reviewQueue: await getLecturerFaceReviewQueue(),
+    checkinQueue: await getIdentityCheckinQueue(),
   }),
   component: IdentitySessions,
 });
 
 function IdentitySessions() {
-  const { classes, reviewQueue: initialQueue } = Route.useLoaderData();
+  const {
+    classes,
+    reviewQueue: initialQueue,
+    checkinQueue: initialCheckinQueue,
+  } = Route.useLoaderData();
   const [openSessionId, setOpenSessionId] = useState<string | null>(null);
   const [selectedClass, setSelectedClass] = useState<string>(classes[0]?.id ?? "");
   const [roster, setRoster] = useState<{ studentId: string; name: string; enrolled: boolean }[]>(
     [],
   );
   const [reviewQueue, setReviewQueue] = useState(initialQueue);
+  const [checkinQueue, setCheckinQueue] = useState(initialCheckinQueue);
 
   async function open() {
     const res = await openEnrollmentSession({
@@ -54,6 +62,10 @@ function IdentitySessions() {
 
   async function refreshReviewQueue() {
     setReviewQueue(await getLecturerFaceReviewQueue());
+  }
+
+  async function refreshCheckinQueue() {
+    setCheckinQueue(await getIdentityCheckinQueue());
   }
 
   return (
@@ -113,7 +125,58 @@ function IdentitySessions() {
           </div>
         )}
       </Card>
+
+      <PageHeader
+        badge="Face Match"
+        title="Exam check-in queue"
+        subtitle="Students blocked from starting an exam until identity is confirmed."
+      />
+      <Card className="max-w-xl space-y-4">
+        {checkinQueue.length === 0 ? (
+          <Empty
+            title="Nothing waiting"
+            hint="Students stuck at exam check-in will show up here."
+          />
+        ) : (
+          <div className="space-y-3">
+            {checkinQueue.map((item: any) => (
+              <CheckinRow key={item.id} item={item} onDecided={refreshCheckinQueue} />
+            ))}
+          </div>
+        )}
+      </Card>
     </>
+  );
+}
+
+function CheckinRow({
+  item,
+  onDecided,
+}: {
+  item: Awaited<ReturnType<typeof getIdentityCheckinQueue>>[number];
+  onDecided: () => void;
+}) {
+  async function decide(decision: "clear" | "reject") {
+    await decideIdentityCheckin({ data: { queueId: item.id, decision } });
+    toast.success(decision === "clear" ? "Cleared" : "Rejected");
+    onDecided();
+  }
+
+  return (
+    <div className="border-2 border-ink rounded-xl p-3 space-y-2">
+      <div className="font-display font-bold">{item.studentName}</div>
+      <div className="text-xs font-mono text-muted-foreground">
+        {item.matricNo} · waiting since {new Date(item.queuedAt).toLocaleTimeString()}
+      </div>
+      <div className="flex gap-2">
+        <WakeoutButton variant="primary" size="sm" onClick={() => decide("clear")}>
+          Clear
+        </WakeoutButton>
+        <WakeoutButton variant="destructive" size="sm" onClick={() => decide("reject")}>
+          Reject
+        </WakeoutButton>
+      </div>
+    </div>
   );
 }
 
