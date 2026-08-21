@@ -3,13 +3,42 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader, Card } from "@/components/brand/page";
 import { FacialReviewCard } from "@/components/brand/facial-review-card";
-import { getFacialReviewQueue, reviewFacialProfile } from "@/lib/supabase/face-id";
+import { getFacialReviewQueue, reviewFacialProfile, getCheckinQueue, reviewCheckin } from "@/lib/supabase/face-id";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/admin/face-id-review")({
   head: () => ({ meta: [{ title: "Face ID Review — Aura" }] }),
   component: FaceIdReviewPage,
 });
+
+function CheckinQueueTab() {
+  const queryClient = useQueryClient();
+  const { data: rows } = useQuery({ queryKey: ["checkin-queue"], queryFn: () => getCheckinQueue() });
+
+  return (
+    <div className="grid md:grid-cols-2 gap-4">
+      {(rows ?? []).length === 0 && <p className="text-sm text-muted-foreground">No students waiting on check-in review.</p>}
+      {(rows ?? []).map((row) => (
+        <FacialReviewCard
+          key={row.submissionId}
+          name={row.studentName}
+          subtitle={row.examTitle}
+          photoUrl={null}
+          snapshotUrl={row.snapshotUrl}
+          score={row.score}
+          onApprove={async () => {
+            await reviewCheckin({ data: { submissionId: row.submissionId, action: "clear" } });
+            queryClient.invalidateQueries({ queryKey: ["checkin-queue"] });
+          }}
+          onReject={async (reason) => {
+            await reviewCheckin({ data: { submissionId: row.submissionId, action: "reject", reason } });
+            queryClient.invalidateQueries({ queryKey: ["checkin-queue"] });
+          }}
+        />
+      ))}
+    </div>
+  );
+}
 
 function FaceIdReviewPage() {
   const [tab, setTab] = useState<"registrations" | "checkins">("registrations");
@@ -57,7 +86,7 @@ function FaceIdReviewPage() {
           ))}
         </div>
       )}
-      {tab === "checkins" && <p className="text-sm text-muted-foreground">Wired in Task 14.</p>}
+      {tab === "checkins" && <CheckinQueueTab />}
     </>
   );
 }

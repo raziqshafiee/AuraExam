@@ -487,3 +487,81 @@ export const checkInExam = createServerFn({ method: "POST" })
       attemptsRemaining: FACE_ID.MAX_CHECKIN_ATTEMPTS - 1,
     };
   });
+
+export const getCheckinQueue = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { data: me } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+  if (me?.role !== "admin" && me?.role !== "lecturer") throw new Error("Unauthorized");
+
+  const admin = createAdminClient();
+  let query = admin
+    .from("submissions")
+    .select("id, check_in_score, student_id, profiles!student_id(name), exams!inner(title, classes!inner(lecturer_id))")
+    .eq("checkin_status", "checkin-pending-review");
+
+  if (me.role === "lecturer") {
+    query = query.eq("exams.classes.lecturer_id", user.id);
+  }
+
+  const { data: rows, error } = await query;
+  if (error) throw new Error(error.message);
+
+  return Promise.all(
+    (rows ?? []).map(async (r: any) => {
+      const { snapshotUrl } = await signedFacialProfileUrls(r.student_id);
+      return {
+        submissionId: r.id as string,
+        studentName: r.profiles?.name ?? "Unknown",
+        examTitle: r.exams?.title ?? "Untitled exam",
+        score: r.check_in_score as number | null,
+        snapshotUrl,
+      };
+    }),
+  );
+});
+
+export const reviewCheckin = createServerFn({ method: "POST" })
+  .inputValidator((data: { submissionId: string; action: "clear" | "reject"; reason?: string }) => data)
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const { data: me } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+    if (me?.role !== "admin" && me?.role !== "lecturer") throw new Error("Unauthorized");
+
+    const admin = createAdminClient();
+
+    if (me.role === "lecturer") {
+      const { data: owned } = await admin
+        .from("submissions")
+        .select("id, exams!inner(classes!inner(lecturer_id))")
+        .eq("id", data.submissionId)
+        .eq("exams.classes.lecturer_id", user.id)
+        .maybeSingle();
+      if (!owned) throw new Error("Forbidden");
+    }
+
+    await admin
+      .from("submissions")
+      .update({
+        checkin_status: data.action === "clear" ? "verified" : "rejected",
+        ...(data.action === "clear" ? { checked_in_at: new Date().toISOString() } : {}),
+      })
+      .eq("id", data.submissionId);
+
+    await writeAudit(user.id, {
+      action: `${data.action === "clear" ? "Cleared" : "Rejected"} exam check-in for submission ${data.submissionId}`,
+      target: data.submissionId,
+      category: "identity",
+    });
+
+    return { ok: true as const };
+  });
