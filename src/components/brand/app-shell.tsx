@@ -19,6 +19,7 @@ import {
   ScrollText,
   ShieldAlert,
   Lightbulb,
+  ScanFace,
   type LucideIcon,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -58,6 +59,7 @@ const PRIMARY_NAV: Record<Role, NavItem[]> = {
     { to: "/lecturer/question-bank", label: "Question Bank", icon: Library },
     { to: "/lecturer/exams", label: "Exams", icon: FileText },
     { to: "/lecturer/appeals", label: "Appeals", icon: Scale, badge: "appeals" },
+    { to: "/lecturer/face-id-review", label: "Face ID", icon: ScanFace },
   ],
   admin: [
     { to: "/admin", label: "Dashboard", icon: LayoutDashboard },
@@ -65,6 +67,7 @@ const PRIMARY_NAV: Record<Role, NavItem[]> = {
     { to: "/admin/classes", label: "Classes", icon: BookOpen },
     { to: "/admin/exams", label: "Exams", icon: FileText },
     { to: "/admin/integrity", label: "Integrity", icon: ShieldAlert },
+    { to: "/admin/face-id-review", label: "Face ID", icon: ScanFace },
     { to: "/admin/audit-log", label: "Audit Log", icon: ScrollText },
   ],
 };
