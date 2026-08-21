@@ -41,6 +41,9 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
   const [endTime, setEndTime] = useState(isoToMyLocalInput(exam?.end_time));
   const [duration, setDuration] = useState(exam?.duration ?? 90);
   const [requireCamera, setRequireCamera] = useState(exam?.require_camera ?? false);
+  const [requireIdentityVerification, setRequireIdentityVerification] = useState(
+    exam?.require_identity_verification ?? false,
+  );
   const [shuffle, setShuffle] = useState(exam?.shuffle ?? false);
   const [pickedIds, setPickedIds] = useState<string[]>(exam?.questions?.map((q) => q.id) ?? []);
   const [saving, setSaving] = useState(false);
@@ -114,6 +117,7 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
             end_time: myLocalInputToISO(endTime),
             duration,
             require_camera: requireCamera,
+            require_identity_verification: requireIdentityVerification,
             shuffle,
             status: newStatus,
             question_ids: pickedIds,
@@ -130,6 +134,7 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
             end_time: myLocalInputToISO(endTime),
             duration,
             require_camera: requireCamera,
+            require_identity_verification: requireIdentityVerification,
             shuffle,
             status: newStatus,
             question_ids: pickedIds,
@@ -196,8 +201,8 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
                 <span className="shrink-0 mt-0.5">🔒</span>
                 <span>
                   <strong>Schedule, class, duration, and questions are locked</strong> — students
-                  have already been notified of this exam. You can still update the title and camera
-                  settings.
+                  have already been notified of this exam. You can still update the title, camera,
+                  and Face ID settings.
                 </span>
               </div>
             )}
@@ -284,6 +289,28 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
               >
                 <span
                   className={`absolute top-0.5 w-4 h-4 rounded-full bg-white border border-ink/30 transition-all ${requireCamera ? "left-6" : "left-0.5"}`}
+                />
+              </button>
+            </div>
+            {/* Identity verification toggle */}
+            <div
+              className={`flex items-center justify-between px-4 py-3 rounded-2xl border-2 transition-colors ${requireIdentityVerification ? "border-violet bg-violet/10" : "border-ink/20 bg-background"}`}
+            >
+              <div>
+                <p className="text-xs font-mono uppercase tracking-widest text-ink/60">Require Face ID check-in</p>
+                <p className="text-sm font-semibold mt-0.5">
+                  {requireIdentityVerification ? "Check-in required" : "No identity check"}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={requireIdentityVerification}
+                onClick={() => setRequireIdentityVerification((v) => !v)}
+                className={`relative w-12 h-6 rounded-full border-2 border-ink transition-colors ${requireIdentityVerification ? "bg-violet" : "bg-muted"}`}
+              >
+                <span
+                  className={`absolute top-0.5 w-4 h-4 rounded-full bg-white border border-ink/30 transition-all ${requireIdentityVerification ? "left-6" : "left-0.5"}`}
                 />
               </button>
             </div>

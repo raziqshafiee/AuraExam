@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { PageHeader, Card } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
+import { FaceIdCheckin } from "@/components/brand/face-id-checkin";
 import { getStudentExamLobby, startExam } from "@/lib/supabase/exams";
 import { fmtMY } from "@/lib/datetime";
 import {
@@ -41,6 +42,7 @@ function Lobby() {
   const [agreed, setAgreed] = useState(false);
   const [starting, setStarting] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
+  const [checkinToken, setCheckinToken] = useState<string | null>(null);
 
   const existingStatus = exam.existingSubmission?.status;
   const isRetake = existingStatus === "retake-approved";
@@ -139,6 +141,10 @@ function Lobby() {
       toast.error("Please agree to the rules first");
       return;
     }
+    if (exam.require_identity_verification && !checkinToken) {
+      toast.error("Complete Face ID check-in first");
+      return;
+    }
     setStarting(true);
     try {
       // Await fullscreen before navigating so the take page always mounts with
@@ -147,7 +153,9 @@ function Lobby() {
       // browser cancels the first one, and the fullscreenchange listener fires a
       // false "exited fullscreen" flag before the student has done anything.
       await document.documentElement.requestFullscreen().catch(() => {});
-      const { submissionId } = await startExam({ data: exam.id });
+      const { submissionId } = await startExam({
+        data: { examId: exam.id, token: checkinToken ?? undefined },
+      });
       // On a retake the server reuses the same submission row (same id), so
       // sessionStorage still holds the previous attempt's answers. Clear them
       // now so the retake page starts completely blank.
@@ -230,6 +238,13 @@ function Lobby() {
         </div>
       </Card>
 
+      {exam.require_identity_verification && !checkinToken && (
+        <Card className="mb-6">
+          <div className="font-display font-bold text-xl mb-3">Face ID check-in</div>
+          <FaceIdCheckin examId={exam.id} onPassed={setCheckinToken} />
+        </Card>
+      )}
+
       <div className="grid lg:grid-cols-2 gap-6">
         <Card>
           <div className="flex items-center justify-between mb-3">
@@ -300,7 +315,12 @@ function Lobby() {
           <WakeoutButton
             variant="primary"
             size="default"
-            disabled={!agreed || starting || (exam.require_camera && !cameraReady)}
+            disabled={
+              !agreed ||
+              starting ||
+              (exam.require_camera && !cameraReady) ||
+              (exam.require_identity_verification && !checkinToken)
+            }
             onClick={handleStart}
             className="mt-4 w-full rounded-2xl"
           >
