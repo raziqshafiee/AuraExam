@@ -108,11 +108,16 @@ function Lobby() {
     );
   }
 
-  // Already submitted/graded — not eligible to retake
+  // Already submitted/graded — not eligible to retake.
+  // 'checkin-pending' is NOT a finished attempt: it is a Face ID check-in that
+  // never became one. Excluding it means a reload mid-check-in (or while
+  // waiting on invigilator clearance) re-renders the lobby and its check-in
+  // card instead of locking the student out behind "Already submitted".
   if (
     exam.existingSubmission &&
     existingStatus !== "in-progress" &&
-    existingStatus !== "retake-approved"
+    existingStatus !== "retake-approved" &&
+    existingStatus !== "checkin-pending"
   ) {
     return (
       <>

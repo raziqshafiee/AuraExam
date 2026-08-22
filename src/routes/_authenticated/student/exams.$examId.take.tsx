@@ -1,6 +1,6 @@
 "use client";
 
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { flushSync } from "react-dom";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
@@ -16,7 +16,22 @@ import { renderMarkdown, stripMarkdown } from "@/lib/render-text";
 
 export const Route = createFileRoute("/_authenticated/student/exams/$examId/take")({
   head: () => ({ meta: [{ title: "Taking exam — Aura" }] }),
-  loader: ({ params }) => getExamForTaking({ data: params.examId }),
+  loader: async ({ params }) => {
+    try {
+      return await getExamForTaking({ data: params.examId });
+    } catch (err: any) {
+      // Face ID exams refuse to hand over question content until the student's
+      // check-in is cleared — send them back to the lobby to do it rather than
+      // dumping them on an error page.
+      if (typeof err?.message === "string" && err.message.startsWith("Face ID check-in required")) {
+        throw redirect({
+          to: "/student/exams/$examId/lobby",
+          params: { examId: params.examId },
+        });
+      }
+      throw err;
+    }
+  },
   component: TakeExam,
 });
 
@@ -112,8 +127,26 @@ function TakeExam() {
         const human = await loadHuman();
         const face = await extractEmbedding(human, video);
         if (!face) return;
+        // Send the frame alongside the embedding so a server-confirmed
+        // mismatch can be filed with photographic evidence attached.
+        let snapshotBase64: string | undefined;
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          if (canvas.width && canvas.height) {
+            canvas.getContext("2d")?.drawImage(video, 0, 0);
+            snapshotBase64 = canvas.toDataURL("image/jpeg", 0.6);
+          }
+        } catch {
+          // a snapshot is nice-to-have; never block the continuity check
+        }
         await checkIdentityContinuity({
-          data: { submissionId: submissionIdRef.current, embedding: face.embedding },
+          data: {
+            submissionId: submissionIdRef.current,
+            embedding: face.embedding,
+            snapshotBase64,
+          },
         });
       } catch {
         // best-effort — a failed continuity check is not itself a flag
