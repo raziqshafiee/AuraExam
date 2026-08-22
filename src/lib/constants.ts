@@ -17,7 +17,7 @@ export const AUTOSAVE = {
 } as const;
 
 export const FACE_ID = {
-  MATCH_THRESHOLD: 0.85,
+  MATCH_THRESHOLD: 0.8,
   MAX_ENROLL_ATTEMPTS: 3,
   MAX_CHECKIN_ATTEMPTS: 3,
   COOLDOWN_DAYS: 90,
