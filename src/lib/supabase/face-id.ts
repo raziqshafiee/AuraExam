@@ -278,7 +278,7 @@ export const getFacialReviewQueue = createServerFn({ method: "GET" }).handler(as
   const admin = createAdminClient();
   let query = admin
     .from("user_facial_profiles")
-    .select("user_id, verification_attempts, profiles!user_id(name, email)")
+    .select("user_id, verification_attempts, profiles!user_id(name)")
     .eq("status", "PENDING_REVIEW");
 
   if (me.role === "lecturer") {
@@ -294,13 +294,18 @@ export const getFacialReviewQueue = createServerFn({ method: "GET" }).handler(as
   const { data: rows, error } = await query;
   if (error) throw new Error(error.message);
 
+  // profiles has no email column — emails live in auth.users, matched here
+  // the same way getAllUsers (users.ts) does it.
+  const { data: authData } = await admin.auth.admin.listUsers({ perPage: 1000 });
+  const emailMap = new Map((authData?.users ?? []).map((u) => [u.id, u.email ?? ""]));
+
   return Promise.all(
     (rows ?? []).map(async (r: any) => {
       const { photoUrl, snapshotUrl } = await signedFacialProfileUrls(r.user_id);
       return {
         userId: r.user_id as string,
         name: r.profiles?.name ?? "Unknown",
-        email: r.profiles?.email ?? "",
+        email: emailMap.get(r.user_id) ?? "",
         photoUrl,
         snapshotUrl,
       };
