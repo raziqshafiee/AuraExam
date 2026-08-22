@@ -21,6 +21,9 @@ function CheckinQueueTab() {
   const { data: rows } = useQuery({
     queryKey: ["checkin-queue"],
     queryFn: () => getCheckinQueue(),
+    // A student can pass check-in on their own retry while this page is
+    // open — poll so they drop off the list without a manual refresh.
+    refetchInterval: 15_000,
   });
 
   return (

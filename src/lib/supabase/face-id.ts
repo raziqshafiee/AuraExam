@@ -499,15 +499,23 @@ export const checkInExam = createServerFn({ method: "POST" })
           token: await mintToken(sub.id),
         };
       }
-      if (sub.checkin_status === "rejected") {
-        throw new Error("Your check-in was rejected. Contact your lecturer.");
-      }
-      if ((sub.checkin_attempts ?? 0) >= FACE_ID.MAX_CHECKIN_ATTEMPTS) {
+
+      // A rejected check-in gets a fresh attempt cycle rather than a
+      // permanent block — treated exactly like a first attempt (attempts
+      // reset to 0). If this new cycle doesn't resolve immediately (pass or
+      // exhaust), the "retry" branch below explicitly flips checkin_status
+      // away from "rejected" back to "pending" so later calls correctly
+      // keep counting up from here instead of re-detecting "rejected" and
+      // resetting to 0 forever.
+      const isRetryAfterRejection = sub.checkin_status === "rejected";
+      const attemptsSoFar = isRetryAfterRejection ? 0 : (sub.checkin_attempts ?? 0);
+
+      if (!isRetryAfterRejection && attemptsSoFar >= FACE_ID.MAX_CHECKIN_ATTEMPTS) {
         return { outcome: "checkin-pending-review" as const, submissionId: sub.id };
       }
 
       const score = cosineSimilarity(profile.baseline_embedding as number[], data.embedding);
-      const attempts = (sub.checkin_attempts ?? 0) + 1;
+      const attempts = attemptsSoFar + 1;
 
       if (score >= FACE_ID.MATCH_THRESHOLD) {
         await admin
@@ -539,7 +547,7 @@ export const checkInExam = createServerFn({ method: "POST" })
       }
       await admin
         .from("submissions")
-        .update({ check_in_score: score, checkin_attempts: attempts })
+        .update({ checkin_status: "pending", check_in_score: score, checkin_attempts: attempts })
         .eq("id", sub.id);
       return {
         outcome: "retry" as const,
