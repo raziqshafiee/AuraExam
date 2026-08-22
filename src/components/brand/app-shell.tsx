@@ -135,6 +135,14 @@ function NavLink({
     <Link
       to={item.to}
       title={collapsed ? item.label : undefined}
+      // This is the persistent left-nav sidebar — a small, fixed set of
+      // links mounted once per session. "intent" (hover-based) preload
+      // misses fast clicks with little/no hover dwell time, so the click
+      // itself pays for the full loader round-trip. Preloading on render
+      // instead means these routes' data is already warm by the time any
+      // click happens, at the one-time cost of prefetching all of them
+      // up front rather than only the sections actually hovered.
+      preload="render"
       className={`relative flex items-center ${collapsed ? "justify-center px-0" : "gap-2.5 px-3"} py-2 rounded-xl text-sm font-semibold border-2 transition-colors ${
         active ? `${ROLE_BG[role]} border-ink shadow-brut-sm` : "border-transparent hover:bg-accent"
       }`}
@@ -174,6 +182,7 @@ function BottomNav({
           <Link
             key={item.to}
             to={item.to}
+            preload="render"
             className={`flex-1 flex flex-col items-center justify-center gap-1 relative transition-colors ${
               active ? "text-ink" : "text-muted-foreground"
             }`}
