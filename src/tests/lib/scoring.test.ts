@@ -28,7 +28,7 @@ interface AnswerInsert {
 function scoreSubmission(
   questions: Question[],
   answers: Record<string, string>,
-  submissionId: string
+  submissionId: string,
 ): { score: number; inserts: AnswerInsert[] } {
   const LETTER_MAP: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 };
   let score = 0;
@@ -39,28 +39,37 @@ function scoreSubmission(
 
     if (q.type === "MCQ") {
       const studentIdx = LETTER_MAP[studentAnswer];
-      const pts =
-        studentIdx !== undefined && studentIdx === q.meta?.correct
-          ? (q.points ?? 1)
-          : 0;
+      const pts = studentIdx !== undefined && studentIdx === q.meta?.correct ? (q.points ?? 1) : 0;
       if (studentIdx !== undefined) score += pts;
       if (studentIdx !== undefined) {
-        inserts.push({ submission_id: submissionId, question_id: q.id, answer: studentAnswer, score: pts });
+        inserts.push({
+          submission_id: submissionId,
+          question_id: q.id,
+          answer: studentAnswer,
+          score: pts,
+        });
       }
     } else if (q.type === "TF") {
       const studentBool = studentAnswer === "True";
-      const pts =
-        studentAnswer !== "" && studentBool === q.meta?.correct
-          ? (q.points ?? 1)
-          : 0;
+      const pts = studentAnswer !== "" && studentBool === q.meta?.correct ? (q.points ?? 1) : 0;
       if (studentAnswer !== "") score += pts;
       if (studentAnswer) {
-        inserts.push({ submission_id: submissionId, question_id: q.id, answer: studentAnswer, score: pts });
+        inserts.push({
+          submission_id: submissionId,
+          question_id: q.id,
+          answer: studentAnswer,
+          score: pts,
+        });
       }
     } else if (q.type === "ESSAY") {
       if (studentAnswer.trim()) {
         const truncated = studentAnswer.slice(0, 5000);
-        inserts.push({ submission_id: submissionId, question_id: q.id, answer: truncated, score: null });
+        inserts.push({
+          submission_id: submissionId,
+          question_id: q.id,
+          answer: truncated,
+          score: null,
+        });
       }
     }
   }
@@ -136,7 +145,12 @@ describe("MCQ scoring", () => {
   });
 
   it("falls back to 1 point when question.points is not set", () => {
-    const noPoints: Question = { id: "q5", type: "MCQ", points: undefined as any, meta: { correct: 0 } };
+    const noPoints: Question = {
+      id: "q5",
+      type: "MCQ",
+      points: undefined as any,
+      meta: { correct: 0 },
+    };
     const { score } = scoreSubmission([noPoints], { q5: "A" }, "sub1");
     expect(score).toBe(1);
   });
@@ -146,7 +160,7 @@ describe("MCQ scoring", () => {
 // TF scoring
 // ---------------------------------------------------------------------------
 describe("TF scoring", () => {
-  const qTrue: Question  = { id: "t1", type: "TF", points: 1, meta: { correct: true } };
+  const qTrue: Question = { id: "t1", type: "TF", points: 1, meta: { correct: true } };
   const qFalse: Question = { id: "t2", type: "TF", points: 2, meta: { correct: false } };
 
   it("awards points when student answers True and correct is true", () => {
@@ -233,15 +247,15 @@ describe("ESSAY answer handling", () => {
 // Mixed question sets
 // ---------------------------------------------------------------------------
 describe("Mixed question scoring", () => {
-  const mcq: Question   = { id: "m1", type: "MCQ",   points: 2, meta: { correct: 1 } };
-  const tf: Question    = { id: "t1", type: "TF",    points: 1, meta: { correct: true } };
+  const mcq: Question = { id: "m1", type: "MCQ", points: 2, meta: { correct: 1 } };
+  const tf: Question = { id: "t1", type: "TF", points: 1, meta: { correct: true } };
   const essay: Question = { id: "e1", type: "ESSAY", points: 5, meta: null };
 
   it("auto_score is only MCQ + TF; essay is unscored", () => {
     const { score, inserts } = scoreSubmission(
       [mcq, tf, essay],
       { m1: "B", t1: "True", e1: "My essay" },
-      "sub1"
+      "sub1",
     );
     expect(score).toBe(3); // 2 + 1
     expect(inserts.find((i) => i.question_id === "e1")?.score).toBeNull();
@@ -257,7 +271,7 @@ describe("Mixed question scoring", () => {
     const { inserts } = scoreSubmission(
       [mcq, tf, essay],
       { m1: "B", t1: "True", e1: "text" },
-      "submission-abc-123"
+      "submission-abc-123",
     );
     expect(inserts.every((i) => i.submission_id === "submission-abc-123")).toBe(true);
   });
@@ -268,15 +282,28 @@ describe("Mixed question scoring", () => {
 // ---------------------------------------------------------------------------
 describe("Hard flag type whitelist", () => {
   const HARD_FLAG_TYPES = new Set([
-    "tab-switch", "copy", "paste", "fullscreen-exit",
-    "multiple-faces", "screenshot", "right-click",
+    "tab-switch",
+    "copy",
+    "paste",
+    "fullscreen-exit",
+    "multiple-faces",
+    "screenshot",
+    "right-click",
   ]);
 
   const ADVISORY_TYPES = ["face-missing", "camera-lost", "gaze-away", "head-turned"];
 
   it("contains all 7 expected hard flag types", () => {
     expect(HARD_FLAG_TYPES.size).toBe(7);
-    for (const t of ["tab-switch","copy","paste","fullscreen-exit","multiple-faces","screenshot","right-click"]) {
+    for (const t of [
+      "tab-switch",
+      "copy",
+      "paste",
+      "fullscreen-exit",
+      "multiple-faces",
+      "screenshot",
+      "right-click",
+    ]) {
       expect(HARD_FLAG_TYPES.has(t)).toBe(true);
     }
   });
@@ -292,8 +319,7 @@ describe("Hard flag type whitelist", () => {
   });
 
   it("only hard types increment the flag counter", () => {
-    const inc = (type: string, flags: number) =>
-      HARD_FLAG_TYPES.has(type) ? flags + 1 : flags;
+    const inc = (type: string, flags: number) => (HARD_FLAG_TYPES.has(type) ? flags + 1 : flags);
 
     expect(inc("tab-switch", 0)).toBe(1);
     expect(inc("face-missing", 0)).toBe(0);
@@ -318,9 +344,20 @@ describe("Exam lifecycle state machine", () => {
   const canEdit = (s: ExamStatus) => !LOCKED.includes(s);
   const canDelete = (s: ExamStatus, subs: number) => !LOCKED.includes(s) && subs === 0;
   const allowedFields = (s: ExamStatus) =>
-    LOCKED.includes(s) ? [] :
-    s === "upcoming" ? ["title", "require_camera"] :
-    ["title", "class_id", "start_time", "end_time", "duration", "require_camera", "status", "questions"];
+    LOCKED.includes(s)
+      ? []
+      : s === "upcoming"
+        ? ["title", "require_camera"]
+        : [
+            "title",
+            "class_id",
+            "start_time",
+            "end_time",
+            "duration",
+            "require_camera",
+            "status",
+            "questions",
+          ];
 
   it("draft can be edited with all fields", () => {
     expect(canEdit("draft")).toBe(true);
@@ -382,7 +419,9 @@ describe("Appeal window (7 days)", () => {
 // Essay grading — final score calculation
 // ---------------------------------------------------------------------------
 describe("Essay grading — score promotion", () => {
-  interface Essay { score: number | null }
+  interface Essay {
+    score: number | null;
+  }
 
   function computeScore(autoScore: number, essays: Essay[]) {
     const allGraded = essays.length > 0 && essays.every((e) => e.score !== null);

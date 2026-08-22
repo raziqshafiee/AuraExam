@@ -16,7 +16,10 @@ const SAMPLE_INTERVAL_MS = 400;
 // ("live") and antispoof ("real") scores — the same signals the pre-existing
 // submit-time identity check in this codebase already relied on, rather than
 // a hand-rolled blink/head-turn detector.
-export async function runLivenessCheck(human: any, video: HTMLVideoElement): Promise<LivenessResult> {
+export async function runLivenessCheck(
+  human: any,
+  video: HTMLVideoElement,
+): Promise<LivenessResult> {
   const liveScores: number[] = [];
   const realScores: number[] = [];
 

@@ -16,7 +16,12 @@ function FaceIdPage() {
 
   return (
     <>
-      <PageHeader badge="Identity" badgeColor="bg-sky" title="Face ID" subtitle="Register your identity for exams" />
+      <PageHeader
+        badge="Identity"
+        badgeColor="bg-sky"
+        title="Face ID"
+        subtitle="Register your identity for exams"
+      />
       <Card className="max-w-lg">
         {step === "upload" && (
           <PassportUpload

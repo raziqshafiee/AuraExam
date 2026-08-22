@@ -12,7 +12,11 @@ describe("computeTrustScore", () => {
 
   it("deducts multiple weighted flags", () => {
     expect(
-      computeTrustScore([{ type: "face-missing" }, { type: "gaze-away" }, { type: "multiple-faces" }]),
+      computeTrustScore([
+        { type: "face-missing" },
+        { type: "gaze-away" },
+        { type: "multiple-faces" },
+      ]),
     ).toBe(100 - 5 - 3 - 15);
   });
 

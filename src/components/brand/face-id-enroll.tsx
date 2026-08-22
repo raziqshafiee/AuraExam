@@ -65,11 +65,15 @@ export function FaceIdEnroll({ passportEmbedding, onDone }: Props) {
         onDone("VERIFIED");
       } else if (result.status === "PENDING_REVIEW") {
         setState("failed");
-        setMessage("We couldn't confirm a match after 3 attempts. Sent to your lecturer for review.");
+        setMessage(
+          "We couldn't confirm a match after 3 attempts. Sent to your lecturer for review.",
+        );
         onDone("PENDING_REVIEW");
       } else {
         setState("retry");
-        setMessage(`Match too low (${Math.round(result.score * 100)}%). ${result.attemptsRemaining} attempt(s) left.`);
+        setMessage(
+          `Match too low (${Math.round(result.score * 100)}%). ${result.attemptsRemaining} attempt(s) left.`,
+        );
       }
     } catch (err: any) {
       setState("retry");
@@ -93,7 +97,13 @@ export function FaceIdEnroll({ passportEmbedding, onDone }: Props) {
         </div>
       )}
       {state !== "failed" && (
-        <WakeoutButton variant="primary" size="default" disabled={state === "checking"} onClick={runCheck} className="w-full">
+        <WakeoutButton
+          variant="primary"
+          size="default"
+          disabled={state === "checking"}
+          onClick={runCheck}
+          className="w-full"
+        >
           {state === "checking" ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" /> Verifying…

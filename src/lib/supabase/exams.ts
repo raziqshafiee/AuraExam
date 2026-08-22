@@ -1250,11 +1250,19 @@ export const startExam = createServerFn({ method: "POST" })
 
       if (sub.status === "checkin-pending") {
         if (!data.token) throw new Error("Face ID check-in required before starting this exam.");
-        const valid = await verifyExamToken(data.token, { sub: user.id, examId, submissionId: sub.id });
+        const valid = await verifyExamToken(data.token, {
+          sub: user.id,
+          examId,
+          submissionId: sub.id,
+        });
         if (!valid) throw new Error("Your check-in session has expired — please check in again.");
         await db(supabase)
           .from("submissions")
-          .update({ status: "in-progress", started_at: new Date().toISOString(), total: totalPoints })
+          .update({
+            status: "in-progress",
+            started_at: new Date().toISOString(),
+            total: totalPoints,
+          })
           .eq("id", sub.id);
         return { submissionId: sub.id as string };
       }

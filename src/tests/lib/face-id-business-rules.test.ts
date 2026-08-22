@@ -3,23 +3,38 @@ import { nextRegistrationOutcome, canRequestPhotoChange } from "@/lib/face-id/bu
 
 describe("nextRegistrationOutcome", () => {
   it("returns VERIFIED when score meets threshold on the first attempt", () => {
-    expect(nextRegistrationOutcome(0, 0.9, 0.85, 3)).toEqual({ status: "VERIFIED", attemptsRemaining: 3 });
+    expect(nextRegistrationOutcome(0, 0.9, 0.85, 3)).toEqual({
+      status: "VERIFIED",
+      attemptsRemaining: 3,
+    });
   });
 
   it("returns RETRY with attempts remaining on a failing first attempt", () => {
-    expect(nextRegistrationOutcome(0, 0.5, 0.85, 3)).toEqual({ status: "RETRY", attemptsRemaining: 2 });
+    expect(nextRegistrationOutcome(0, 0.5, 0.85, 3)).toEqual({
+      status: "RETRY",
+      attemptsRemaining: 2,
+    });
   });
 
   it("returns RETRY on the second failing attempt", () => {
-    expect(nextRegistrationOutcome(1, 0.5, 0.85, 3)).toEqual({ status: "RETRY", attemptsRemaining: 1 });
+    expect(nextRegistrationOutcome(1, 0.5, 0.85, 3)).toEqual({
+      status: "RETRY",
+      attemptsRemaining: 1,
+    });
   });
 
   it("returns PENDING_REVIEW on the third failing attempt", () => {
-    expect(nextRegistrationOutcome(2, 0.5, 0.85, 3)).toEqual({ status: "PENDING_REVIEW", attemptsRemaining: 0 });
+    expect(nextRegistrationOutcome(2, 0.5, 0.85, 3)).toEqual({
+      status: "PENDING_REVIEW",
+      attemptsRemaining: 0,
+    });
   });
 
   it("returns VERIFIED even on a later attempt if the score now passes", () => {
-    expect(nextRegistrationOutcome(2, 0.95, 0.85, 3)).toEqual({ status: "VERIFIED", attemptsRemaining: 3 });
+    expect(nextRegistrationOutcome(2, 0.95, 0.85, 3)).toEqual({
+      status: "VERIFIED",
+      attemptsRemaining: 3,
+    });
   });
 
   it("treats a score exactly at the threshold as passing", () => {

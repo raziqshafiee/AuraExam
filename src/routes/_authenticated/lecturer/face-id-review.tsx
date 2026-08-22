@@ -3,7 +3,12 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader, Card } from "@/components/brand/page";
 import { FacialReviewCard } from "@/components/brand/facial-review-card";
-import { getFacialReviewQueue, reviewFacialProfile, getCheckinQueue, reviewCheckin } from "@/lib/supabase/face-id";
+import {
+  getFacialReviewQueue,
+  reviewFacialProfile,
+  getCheckinQueue,
+  reviewCheckin,
+} from "@/lib/supabase/face-id";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/lecturer/face-id-review")({
@@ -13,11 +18,16 @@ export const Route = createFileRoute("/_authenticated/lecturer/face-id-review")(
 
 function CheckinQueueTab() {
   const queryClient = useQueryClient();
-  const { data: rows } = useQuery({ queryKey: ["checkin-queue"], queryFn: () => getCheckinQueue() });
+  const { data: rows } = useQuery({
+    queryKey: ["checkin-queue"],
+    queryFn: () => getCheckinQueue(),
+  });
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
-      {(rows ?? []).length === 0 && <p className="text-sm text-muted-foreground">No students waiting on check-in review.</p>}
+      {(rows ?? []).length === 0 && (
+        <p className="text-sm text-muted-foreground">No students waiting on check-in review.</p>
+      )}
       {(rows ?? []).map((row) => (
         <FacialReviewCard
           key={row.submissionId}
@@ -31,7 +41,9 @@ function CheckinQueueTab() {
             queryClient.invalidateQueries({ queryKey: ["checkin-queue"] });
           }}
           onReject={async (reason) => {
-            await reviewCheckin({ data: { submissionId: row.submissionId, action: "reject", reason } });
+            await reviewCheckin({
+              data: { submissionId: row.submissionId, action: "reject", reason },
+            });
             queryClient.invalidateQueries({ queryKey: ["checkin-queue"] });
           }}
         />
@@ -43,11 +55,19 @@ function CheckinQueueTab() {
 function FaceIdReviewPage() {
   const [tab, setTab] = useState<"registrations" | "checkins">("registrations");
   const queryClient = useQueryClient();
-  const { data: queue } = useQuery({ queryKey: ["face-id-review-queue"], queryFn: () => getFacialReviewQueue() });
+  const { data: queue } = useQuery({
+    queryKey: ["face-id-review-queue"],
+    queryFn: () => getFacialReviewQueue(),
+  });
 
   return (
     <>
-      <PageHeader badge="Review" badgeColor="bg-violet" title="Face ID Review" subtitle="Registrations awaiting manual verification" />
+      <PageHeader
+        badge="Review"
+        badgeColor="bg-violet"
+        title="Face ID Review"
+        subtitle="Registrations awaiting manual verification"
+      />
       <div className="flex gap-2 mb-4">
         <button
           onClick={() => setTab("registrations")}
@@ -64,7 +84,9 @@ function FaceIdReviewPage() {
       </div>
       {tab === "registrations" && (
         <div className="grid md:grid-cols-2 gap-4">
-          {(queue ?? []).length === 0 && <p className="text-sm text-muted-foreground">No registrations pending review.</p>}
+          {(queue ?? []).length === 0 && (
+            <p className="text-sm text-muted-foreground">No registrations pending review.</p>
+          )}
           {(queue ?? []).map((row) => (
             <FacialReviewCard
               key={row.userId}
@@ -78,7 +100,9 @@ function FaceIdReviewPage() {
                 queryClient.invalidateQueries({ queryKey: ["face-id-review-queue"] });
               }}
               onReject={async (reason) => {
-                await reviewFacialProfile({ data: { userId: row.userId, action: "REJECT", reason } });
+                await reviewFacialProfile({
+                  data: { userId: row.userId, action: "REJECT", reason },
+                });
                 toast.success(`${row.name} rejected`);
                 queryClient.invalidateQueries({ queryKey: ["face-id-review-queue"] });
               }}

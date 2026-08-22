@@ -297,7 +297,9 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
               className={`flex items-center justify-between px-4 py-3 rounded-2xl border-2 transition-colors ${requireIdentityVerification ? "border-violet bg-violet/10" : "border-ink/20 bg-background"}`}
             >
               <div>
-                <p className="text-xs font-mono uppercase tracking-widest text-ink/60">Require Face ID check-in</p>
+                <p className="text-xs font-mono uppercase tracking-widest text-ink/60">
+                  Require Face ID check-in
+                </p>
                 <p className="text-sm font-semibold mt-0.5">
                   {requireIdentityVerification ? "Check-in required" : "No identity check"}
                 </p>

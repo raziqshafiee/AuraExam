@@ -3,7 +3,13 @@ import { buildCSV, downloadCSV } from "@/lib/export";
 
 describe("buildCSV", () => {
   it("produces a header row followed by data rows", () => {
-    const csv = buildCSV(["Name", "Score"], [["Alice", 90], ["Bob", 75]]);
+    const csv = buildCSV(
+      ["Name", "Score"],
+      [
+        ["Alice", 90],
+        ["Bob", 75],
+      ],
+    );
     const lines = csv.split("\r\n");
     expect(lines[0]).toBe("Name,Score");
     expect(lines[1]).toBe("Alice,90");
@@ -109,8 +115,12 @@ describe("downloadCSV", () => {
       if (tag === "a") {
         return {
           href: "",
-          get download() { return saved; },
-          set download(v: string) { saved = v; },
+          get download() {
+            return saved;
+          },
+          set download(v: string) {
+            saved = v;
+          },
           click: clickSpy,
         } as any;
       }
@@ -126,8 +136,12 @@ describe("downloadCSV", () => {
       if (tag === "a") {
         return {
           href: "",
-          get download() { return saved; },
-          set download(v: string) { saved = v; },
+          get download() {
+            return saved;
+          },
+          set download(v: string) {
+            saved = v;
+          },
           click: clickSpy,
         } as any;
       }

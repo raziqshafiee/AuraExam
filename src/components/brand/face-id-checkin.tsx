@@ -66,10 +66,14 @@ export function FaceIdCheckin({ examId, onPassed }: Props) {
         onPassed(result.token);
       } else if (result.outcome === "checkin-pending-review") {
         setState("waiting");
-        setMessage("We couldn't confirm a match. Waiting for your lecturer or admin to clear you in.");
+        setMessage(
+          "We couldn't confirm a match. Waiting for your lecturer or admin to clear you in.",
+        );
       } else {
         setState("retry");
-        setMessage(`Match too low (${Math.round(result.score * 100)}%). ${result.attemptsRemaining} attempt(s) left.`);
+        setMessage(
+          `Match too low (${Math.round(result.score * 100)}%). ${result.attemptsRemaining} attempt(s) left.`,
+        );
       }
     } catch (err: any) {
       setState("retry");
@@ -89,7 +93,13 @@ export function FaceIdCheckin({ examId, onPassed }: Props) {
         </div>
       )}
       {state !== "waiting" && (
-        <WakeoutButton variant="primary" size="default" disabled={state === "checking"} onClick={runCheck} className="w-full">
+        <WakeoutButton
+          variant="primary"
+          size="default"
+          disabled={state === "checking"}
+          onClick={runCheck}
+          className="w-full"
+        >
           {state === "checking" ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" /> Checking in…
@@ -101,7 +111,8 @@ export function FaceIdCheckin({ examId, onPassed }: Props) {
       )}
       {state === "waiting" && (
         <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Waiting for clearance — this page checks automatically.
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Waiting for clearance — this page checks
+          automatically.
         </p>
       )}
     </div>

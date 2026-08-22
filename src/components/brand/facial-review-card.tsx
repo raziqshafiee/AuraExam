@@ -14,7 +14,15 @@ interface Props {
   onReject: (reason: string) => void | Promise<void>;
 }
 
-export function FacialReviewCard({ name, subtitle, photoUrl, snapshotUrl, score, onApprove, onReject }: Props) {
+export function FacialReviewCard({
+  name,
+  subtitle,
+  photoUrl,
+  snapshotUrl,
+  score,
+  onApprove,
+  onReject,
+}: Props) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -32,8 +40,20 @@ export function FacialReviewCard({ name, subtitle, photoUrl, snapshotUrl, score,
         )}
       </div>
       <div className="grid grid-cols-2 gap-2">
-        {photoUrl && <img src={photoUrl} alt="Registered photo" className="rounded-xl border-2 border-ink aspect-square object-cover" />}
-        {snapshotUrl && <img src={snapshotUrl} alt="Live snapshot" className="rounded-xl border-2 border-ink aspect-square object-cover" />}
+        {photoUrl && (
+          <img
+            src={photoUrl}
+            alt="Registered photo"
+            className="rounded-xl border-2 border-ink aspect-square object-cover"
+          />
+        )}
+        {snapshotUrl && (
+          <img
+            src={snapshotUrl}
+            alt="Live snapshot"
+            className="rounded-xl border-2 border-ink aspect-square object-cover"
+          />
+        )}
       </div>
       <input
         value={reason}

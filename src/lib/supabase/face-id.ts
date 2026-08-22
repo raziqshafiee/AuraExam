@@ -136,18 +136,16 @@ export const verifyEnrolment = createServerFn({ method: "POST" })
     );
 
     if (outcome.status === "VERIFIED") {
-      await db(supabase)
-        .from("user_facial_profiles")
-        .upsert({
-          user_id: user.id,
-          status: "VERIFIED",
-          baseline_embedding: data.liveEmbedding,
-          pending_embedding: null,
-          is_photo_locked: true,
-          verification_attempts: 0,
-          last_photo_update: new Date().toISOString(),
-          rejection_reason: null,
-        });
+      await db(supabase).from("user_facial_profiles").upsert({
+        user_id: user.id,
+        status: "VERIFIED",
+        baseline_embedding: data.liveEmbedding,
+        pending_embedding: null,
+        is_photo_locked: true,
+        verification_attempts: 0,
+        last_photo_update: new Date().toISOString(),
+        rejection_reason: null,
+      });
       await writeAudit(user.id, {
         action: "Face ID registration verified",
         target: user.id,
@@ -166,14 +164,12 @@ export const verifyEnrolment = createServerFn({ method: "POST" })
             upsert: true,
           });
       }
-      await db(supabase)
-        .from("user_facial_profiles")
-        .upsert({
-          user_id: user.id,
-          status: "PENDING_REVIEW",
-          pending_embedding: data.liveEmbedding,
-          verification_attempts: FACE_ID.MAX_ENROLL_ATTEMPTS,
-        });
+      await db(supabase).from("user_facial_profiles").upsert({
+        user_id: user.id,
+        status: "PENDING_REVIEW",
+        pending_embedding: data.liveEmbedding,
+        verification_attempts: FACE_ID.MAX_ENROLL_ATTEMPTS,
+      });
       await writeAudit(user.id, {
         action: "Face ID registration sent to manual review",
         target: user.id,
@@ -192,7 +188,9 @@ export const verifyEnrolment = createServerFn({ method: "POST" })
     return { status: "RETRY" as const, score, attemptsRemaining: outcome.attemptsRemaining };
   });
 
-async function signedFacialProfileUrls(userId: string): Promise<{ photoUrl: string | null; snapshotUrl: string | null }> {
+async function signedFacialProfileUrls(
+  userId: string,
+): Promise<{ photoUrl: string | null; snapshotUrl: string | null }> {
   const admin = createAdminClient();
   const { data: files } = await admin.storage.from(FACIAL_PROFILES_BUCKET).list(userId, {
     limit: 100,
@@ -205,9 +203,13 @@ async function signedFacialProfileUrls(userId: string): Promise<{ photoUrl: stri
   const paths = [passportName, snapshotName].filter(Boolean).map((n) => `${userId}/${n}`);
   if (paths.length === 0) return { photoUrl: null, snapshotUrl: null };
 
-  const { data: signed } = await admin.storage.from(FACIAL_PROFILES_BUCKET).createSignedUrls(paths, 60 * 30);
+  const { data: signed } = await admin.storage
+    .from(FACIAL_PROFILES_BUCKET)
+    .createSignedUrls(paths, 60 * 30);
   const urlFor = (name?: string) =>
-    name ? (signed ?? []).find((s: any) => s.path === `${userId}/${name}`)?.signedUrl ?? null : null;
+    name
+      ? ((signed ?? []).find((s: any) => s.path === `${userId}/${name}`)?.signedUrl ?? null)
+      : null;
 
   return { photoUrl: urlFor(passportName), snapshotUrl: urlFor(snapshotName) };
 }
@@ -221,7 +223,11 @@ export const getFacialReviewQueue = createServerFn({ method: "GET" }).handler(as
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
-  const { data: me } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+  const { data: me } = await db(supabase)
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
   if (me?.role !== "admin" && me?.role !== "lecturer") throw new Error("Unauthorized");
 
   const admin = createAdminClient();
@@ -267,7 +273,11 @@ export const reviewFacialProfile = createServerFn({ method: "POST" })
     } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
-    const { data: me } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+    const { data: me } = await db(supabase)
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
     if (me?.role !== "admin" && me?.role !== "lecturer") throw new Error("Unauthorized");
 
     const admin = createAdminClient();
@@ -378,7 +388,8 @@ export const checkInExam = createServerFn({ method: "POST" })
       .eq("id", data.examId)
       .single();
     if (!exam) throw new Error("Exam not found");
-    if (!exam.require_identity_verification) throw new Error("This exam does not require Face ID check-in.");
+    if (!exam.require_identity_verification)
+      throw new Error("This exam does not require Face ID check-in.");
 
     const { data: enrollment } = await db(supabase)
       .from("class_enrollments")
@@ -392,7 +403,10 @@ export const checkInExam = createServerFn({ method: "POST" })
       ? new Date(exam.end_time).getTime()
       : Date.now() + (exam.duration ?? 0) * 60_000;
     const mintToken = (submissionId: string) =>
-      signExamToken({ sub: user.id, examId: data.examId, submissionId }, new Date(deadlineMs + FACE_ID.TOKEN_BUFFER_MS));
+      signExamToken(
+        { sub: user.id, examId: data.examId, submissionId },
+        new Date(deadlineMs + FACE_ID.TOKEN_BUFFER_MS),
+      );
 
     const existing = await db(supabase)
       .from("submissions")
@@ -404,7 +418,11 @@ export const checkInExam = createServerFn({ method: "POST" })
     if (existing.data) {
       const sub = existing.data;
       if (sub.checkin_status === "verified") {
-        return { outcome: "verified" as const, submissionId: sub.id, token: await mintToken(sub.id) };
+        return {
+          outcome: "verified" as const,
+          submissionId: sub.id,
+          token: await mintToken(sub.id),
+        };
       }
       if (sub.checkin_status === "rejected") {
         throw new Error("Your check-in was rejected. Contact your lecturer.");
@@ -426,12 +444,20 @@ export const checkInExam = createServerFn({ method: "POST" })
             checked_in_at: new Date().toISOString(),
           })
           .eq("id", sub.id);
-        return { outcome: "verified" as const, submissionId: sub.id, token: await mintToken(sub.id) };
+        return {
+          outcome: "verified" as const,
+          submissionId: sub.id,
+          token: await mintToken(sub.id),
+        };
       }
       if (attempts >= FACE_ID.MAX_CHECKIN_ATTEMPTS) {
         await db(supabase)
           .from("submissions")
-          .update({ checkin_status: "checkin-pending-review", check_in_score: score, checkin_attempts: attempts })
+          .update({
+            checkin_status: "checkin-pending-review",
+            check_in_score: score,
+            checkin_attempts: attempts,
+          })
           .eq("id", sub.id);
         return { outcome: "checkin-pending-review" as const, submissionId: sub.id };
       }
@@ -495,13 +521,19 @@ export const getCheckinQueue = createServerFn({ method: "GET" }).handler(async (
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
-  const { data: me } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+  const { data: me } = await db(supabase)
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
   if (me?.role !== "admin" && me?.role !== "lecturer") throw new Error("Unauthorized");
 
   const admin = createAdminClient();
   let query = admin
     .from("submissions")
-    .select("id, check_in_score, student_id, profiles!student_id(name), exams!inner(title, classes!inner(lecturer_id))")
+    .select(
+      "id, check_in_score, student_id, profiles!student_id(name), exams!inner(title, classes!inner(lecturer_id))",
+    )
     .eq("checkin_status", "checkin-pending-review");
 
   if (me.role === "lecturer") {
@@ -526,7 +558,9 @@ export const getCheckinQueue = createServerFn({ method: "GET" }).handler(async (
 });
 
 export const reviewCheckin = createServerFn({ method: "POST" })
-  .inputValidator((data: { submissionId: string; action: "clear" | "reject"; reason?: string }) => data)
+  .inputValidator(
+    (data: { submissionId: string; action: "clear" | "reject"; reason?: string }) => data,
+  )
   .handler(async ({ data }) => {
     const supabase = createClient();
     const {
@@ -534,7 +568,11 @@ export const reviewCheckin = createServerFn({ method: "POST" })
     } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
-    const { data: me } = await db(supabase).from("profiles").select("role").eq("id", user.id).single();
+    const { data: me } = await db(supabase)
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
     if (me?.role !== "admin" && me?.role !== "lecturer") throw new Error("Unauthorized");
 
     const admin = createAdminClient();
@@ -601,7 +639,10 @@ export const checkIdentityContinuity = createServerFn({ method: "POST" })
       const admin = createAdminClient();
       await admin.from("flag_reasons").insert({
         submission_id: data.submissionId,
-        time: new Date().toLocaleTimeString("en-MY", { timeStyle: "short", timeZone: "Asia/Kuala_Lumpur" }),
+        time: new Date().toLocaleTimeString("en-MY", {
+          timeStyle: "short",
+          timeZone: "Asia/Kuala_Lumpur",
+        }),
         type: "identity-mismatch",
         label: "Identity re-check did not match the registered profile",
         confidence_score: score,
