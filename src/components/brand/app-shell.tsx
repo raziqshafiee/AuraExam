@@ -26,6 +26,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useQuery } from "@tanstack/react-query";
 import { getUnreadCount } from "@/lib/supabase/notifications";
 import { getPendingAppealsCount } from "@/lib/supabase/appeals";
+import { getMyFacialProfile } from "@/lib/supabase/face-id";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -362,6 +363,16 @@ export function AppShell({ children }: { children: ReactNode }) {
     enabled: !!user && role !== "admin",
   });
 
+  // Only students register Face ID — lecturers/admins have no
+  // user_facial_profiles row, so this stays disabled for them.
+  const { data: facialProfile } = useQuery({
+    queryKey: ["my-facial-photo"],
+    queryFn: () => getMyFacialProfile(),
+    staleTime: 5 * 60_000,
+    enabled: !!user && role === "student",
+  });
+  const photoUrl = facialProfile?.photoUrl ?? null;
+
   const badges: Record<string, number> = {
     inbox: unreadData?.count ?? 0,
     appeals: appealsData?.count ?? 0,
@@ -515,7 +526,15 @@ export function AppShell({ children }: { children: ReactNode }) {
             )}
             <DropdownMenu>
               <DropdownMenuTrigger className="flex items-center gap-2 px-3 h-10 rounded-full border-2 border-ink bg-card hover:bg-accent">
-                <span className={`w-6 h-6 rounded-full border-2 border-ink ${ROLE_BG[role]}`} />
+                {photoUrl ? (
+                  <img
+                    src={photoUrl}
+                    alt=""
+                    className="w-6 h-6 rounded-full border-2 border-ink object-cover"
+                  />
+                ) : (
+                  <span className={`w-6 h-6 rounded-full border-2 border-ink ${ROLE_BG[role]}`} />
+                )}
                 <span className="text-sm font-semibold hidden sm:inline">
                   {user?.name ?? "Guest"}
                 </span>
