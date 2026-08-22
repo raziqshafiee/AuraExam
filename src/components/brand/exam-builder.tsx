@@ -40,7 +40,11 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
   const [startTime, setStartTime] = useState(isoToMyLocalInput(exam?.start_time));
   const [endTime, setEndTime] = useState(isoToMyLocalInput(exam?.end_time));
   const [duration, setDuration] = useState(exam?.duration ?? 90);
-  const [requireCamera, setRequireCamera] = useState(exam?.require_camera ?? false);
+  // Face ID implies the camera, so an exam saved before the two toggles were
+  // coupled still opens with the camera shown as on (and locked).
+  const [requireCamera, setRequireCamera] = useState(
+    (exam?.require_camera ?? false) || (exam?.require_identity_verification ?? false),
+  );
   const [requireIdentityVerification, setRequireIdentityVerification] = useState(
     exam?.require_identity_verification ?? false,
   );
@@ -116,7 +120,8 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
             start_time: myLocalInputToISO(startTime),
             end_time: myLocalInputToISO(endTime),
             duration,
-            require_camera: requireCamera,
+            // Face ID always needs the camera feed (see the locked toggle below).
+            require_camera: requireCamera || requireIdentityVerification,
             require_identity_verification: requireIdentityVerification,
             shuffle,
             status: newStatus,
@@ -133,7 +138,8 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
             start_time: myLocalInputToISO(startTime),
             end_time: myLocalInputToISO(endTime),
             duration,
-            require_camera: requireCamera,
+            // Face ID always needs the camera feed (see the locked toggle below).
+            require_camera: requireCamera || requireIdentityVerification,
             require_identity_verification: requireIdentityVerification,
             shuffle,
             status: newStatus,
@@ -277,15 +283,23 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
                   Require camera
                 </p>
                 <p className="text-sm font-semibold mt-0.5">
-                  {requireCamera ? "Proctoring on" : "No camera needed"}
+                  {requireIdentityVerification
+                    ? "Locked on — Face ID needs it"
+                    : requireCamera
+                      ? "Proctoring on"
+                      : "No camera needed"}
                 </p>
               </div>
               <button
                 type="button"
                 role="switch"
                 aria-checked={requireCamera}
+                // Face ID's check-in and in-exam continuity checks both read the
+                // proctor camera feed — without it they silently no-op, so the
+                // camera toggle is forced on and locked while Face ID is on.
+                disabled={requireIdentityVerification}
                 onClick={() => setRequireCamera((v) => !v)}
-                className={`relative w-12 h-6 rounded-full border-2 border-ink transition-colors ${requireCamera ? "bg-violet" : "bg-muted"}`}
+                className={`relative w-12 h-6 rounded-full border-2 border-ink transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${requireCamera ? "bg-violet" : "bg-muted"}`}
               >
                 <span
                   className={`absolute top-0.5 w-4 h-4 rounded-full bg-white border border-ink/30 transition-all ${requireCamera ? "left-6" : "left-0.5"}`}
@@ -308,7 +322,13 @@ export function ExamBuilder({ mode, classes, questions, exam }: Props) {
                 type="button"
                 role="switch"
                 aria-checked={requireIdentityVerification}
-                onClick={() => setRequireIdentityVerification((v) => !v)}
+                onClick={() =>
+                  setRequireIdentityVerification((v) => {
+                    // Turning Face ID on forces the camera on too.
+                    if (!v) setRequireCamera(true);
+                    return !v;
+                  })
+                }
                 className={`relative w-12 h-6 rounded-full border-2 border-ink transition-colors ${requireIdentityVerification ? "bg-violet" : "bg-muted"}`}
               >
                 <span

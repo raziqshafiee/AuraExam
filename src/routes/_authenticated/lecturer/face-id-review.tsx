@@ -33,7 +33,7 @@ function CheckinQueueTab() {
           key={row.submissionId}
           name={row.studentName}
           subtitle={row.examTitle}
-          photoUrl={null}
+          photoUrl={row.photoUrl}
           snapshotUrl={row.snapshotUrl}
           score={row.score}
           onApprove={async () => {

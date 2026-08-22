@@ -17,16 +17,26 @@ export function FaceIdEnroll({ passportEmbedding, onDone }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<"idle" | "checking" | "retry" | "failed">("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } }).then((s) => {
-      stream = s;
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-        videoRef.current.play();
-      }
-    });
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: "user" } })
+      .then((s) => {
+        stream = s;
+        if (videoRef.current) {
+          videoRef.current.srcObject = s;
+          videoRef.current.play();
+        }
+      })
+      .catch((err: any) => {
+        setCameraError(
+          err?.name === "NotAllowedError"
+            ? "Camera access was blocked. Allow the camera in your browser's address bar, then reload this page."
+            : "We couldn't start your camera. Check that no other app is using it, then reload this page.",
+        );
+      });
     return () => stream?.getTracks().forEach((t) => t.stop());
   }, []);
 
@@ -86,6 +96,12 @@ export function FaceIdEnroll({ passportEmbedding, onDone }: Props) {
       <div className="aspect-video rounded-2xl border-2 border-ink bg-secondary overflow-hidden">
         <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
       </div>
+      {cameraError && (
+        <div className="flex items-start gap-2 p-3 rounded-xl bg-pink/10 border-2 border-pink text-sm">
+          <XCircle className="w-4 h-4 shrink-0 mt-0.5 text-pink" />
+          {cameraError}
+        </div>
+      )}
       {message && (
         <div className="flex items-start gap-2 p-3 rounded-xl bg-amber/10 border-2 border-amber text-sm">
           {state === "failed" ? (
@@ -100,7 +116,7 @@ export function FaceIdEnroll({ passportEmbedding, onDone }: Props) {
         <WakeoutButton
           variant="primary"
           size="default"
-          disabled={state === "checking"}
+          disabled={state === "checking" || !!cameraError}
           onClick={runCheck}
           className="w-full"
         >
