@@ -30,12 +30,14 @@ export type MyFacialProfile = {
   status: "UNREGISTERED" | "VERIFIED" | "PENDING_REVIEW" | "REJECTED";
   rejectionReason: string | null;
   isPhotoLocked: boolean;
+  photoUrl: string | null;
 };
 
 // GET: the caller's own Face ID registration status, so the student page can
 // show where they stand instead of always restarting at the upload step.
 // Reads run in the caller's context — the owner-SELECT RLS policy is what
-// scopes this to their own row.
+// scopes this to their own row. photoUrl is a 30-minute signed URL to the
+// registered passport photo — used to show it as the profile picture.
 export const getMyFacialProfile = createServerFn({ method: "GET" }).handler(
   async (): Promise<MyFacialProfile> => {
     const supabase = createClient();
@@ -50,10 +52,13 @@ export const getMyFacialProfile = createServerFn({ method: "GET" }).handler(
       .eq("user_id", user.id)
       .maybeSingle();
 
+    const { photoUrl } = profile ? await signedFacialProfileUrls(user.id) : { photoUrl: null };
+
     return {
       status: (profile?.status ?? "UNREGISTERED") as MyFacialProfile["status"],
       rejectionReason: profile?.rejection_reason ?? null,
       isPhotoLocked: profile?.is_photo_locked ?? false,
+      photoUrl,
     };
   },
 );

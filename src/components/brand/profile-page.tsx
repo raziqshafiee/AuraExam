@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, PageHeader } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { getProfile, updateProfileName } from "@/lib/supabase/profile";
+import { getMyFacialProfile } from "@/lib/supabase/face-id";
 import { getSupabaseClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import { Eye, EyeOff } from "lucide-react";
@@ -17,9 +18,7 @@ type Profile = {
 function Initials({ name }: { name: string }) {
   const parts = name.trim().split(/\s+/);
   const letters =
-    parts.length >= 2
-      ? parts[0][0] + parts[parts.length - 1][0]
-      : (parts[0]?.[0] ?? "?");
+    parts.length >= 2 ? parts[0][0] + parts[parts.length - 1][0] : (parts[0]?.[0] ?? "?");
   return (
     <div className="w-24 h-24 rounded-full border-2 border-ink bg-lime mx-auto flex items-center justify-center font-display font-bold text-2xl uppercase select-none">
       {letters}
@@ -30,6 +29,7 @@ function Initials({ name }: { name: string }) {
 export function ProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -50,10 +50,19 @@ export function ProfilePage() {
       })
       .catch(() => toast.error("Failed to load profile"))
       .finally(() => setLoading(false));
+
+    // Lecturers have no Face ID profile — this naturally resolves to
+    // photoUrl: null for them, leaving the initials fallback untouched.
+    getMyFacialProfile()
+      .then((fp) => setPhotoUrl(fp.photoUrl))
+      .catch(() => {});
   }, []);
 
   async function handleSaveInfo() {
-    if (!name.trim()) { toast.error("Name cannot be empty"); return; }
+    if (!name.trim()) {
+      toast.error("Name cannot be empty");
+      return;
+    }
     setSavingInfo(true);
     try {
       const nameChanged = name.trim() !== profile?.name;
@@ -61,7 +70,7 @@ export function ProfilePage() {
 
       if (nameChanged) {
         await updateProfileName({ data: { name: name.trim() } });
-        setProfile((p) => p ? { ...p, name: name.trim() } : p);
+        setProfile((p) => (p ? { ...p, name: name.trim() } : p));
       }
 
       if (emailChanged) {
@@ -81,9 +90,18 @@ export function ProfilePage() {
   }
 
   async function handleChangePassword() {
-    if (!currentPassword) { toast.error("Enter your current password"); return; }
-    if (newPassword.length < 8) { toast.error("New password must be at least 8 characters"); return; }
-    if (newPassword !== confirmPassword) { toast.error("Passwords do not match"); return; }
+    if (!currentPassword) {
+      toast.error("Enter your current password");
+      return;
+    }
+    if (newPassword.length < 8) {
+      toast.error("New password must be at least 8 characters");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
 
     setSavingPw(true);
     try {
@@ -123,7 +141,15 @@ export function ProfilePage() {
       <div className="grid md:grid-cols-[auto_1fr] gap-6 items-start">
         {/* Avatar card */}
         <Card className="text-center min-w-[180px]">
-          <Initials name={name || profile?.name || "?"} />
+          {photoUrl ? (
+            <img
+              src={photoUrl}
+              alt=""
+              className="w-24 h-24 rounded-full border-2 border-ink mx-auto object-cover"
+            />
+          ) : (
+            <Initials name={name || profile?.name || "?"} />
+          )}
           <div className="mt-3 font-display font-bold text-xl">{profile?.name}</div>
           <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mt-0.5">
             {profile?.role}
@@ -159,11 +185,7 @@ export function ProfilePage() {
                 Changing email sends a confirmation link to the new address.
               </p>
             </div>
-            <WakeoutButton
-              variant="primary"
-              disabled={savingInfo}
-              onClick={handleSaveInfo}
-            >
+            <WakeoutButton variant="primary" disabled={savingInfo} onClick={handleSaveInfo}>
               {savingInfo ? "Saving…" : "Save changes"}
             </WakeoutButton>
           </Card>
@@ -172,7 +194,9 @@ export function ProfilePage() {
           <Card className="space-y-4">
             <div className="font-display font-bold text-lg">Change password</div>
             <div>
-              <label className="text-xs font-mono uppercase tracking-widest">Current password</label>
+              <label className="text-xs font-mono uppercase tracking-widest">
+                Current password
+              </label>
               <div className="relative mt-1">
                 <input
                   type={showPw ? "text" : "password"}
@@ -201,7 +225,9 @@ export function ProfilePage() {
               />
             </div>
             <div>
-              <label className="text-xs font-mono uppercase tracking-widest">Confirm new password</label>
+              <label className="text-xs font-mono uppercase tracking-widest">
+                Confirm new password
+              </label>
               <input
                 type={showPw ? "text" : "password"}
                 value={confirmPassword}
@@ -210,11 +236,7 @@ export function ProfilePage() {
                 placeholder="Repeat new password"
               />
             </div>
-            <WakeoutButton
-              variant="secondary"
-              disabled={savingPw}
-              onClick={handleChangePassword}
-            >
+            <WakeoutButton variant="secondary" disabled={savingPw} onClick={handleChangePassword}>
               {savingPw ? "Updating…" : "Update password"}
             </WakeoutButton>
           </Card>
