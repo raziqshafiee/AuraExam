@@ -12,6 +12,7 @@ import {
   getMyFacialProfile,
 } from "@/lib/supabase/face-id";
 import { FACE_ID } from "@/lib/constants";
+import { fmtMY } from "@/lib/datetime";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/student/face-id")({
@@ -93,20 +94,40 @@ function FaceIdPage() {
         return (
           <div className="space-y-4">
             <div className="flex items-start gap-3">
-              <CheckCircle2 className="w-6 h-6 text-lime-600 shrink-0 mt-0.5" />
+              {profile.photoUrl && (
+                <img
+                  src={profile.photoUrl}
+                  alt=""
+                  className="w-16 h-16 rounded-xl border-2 border-ink object-cover shrink-0"
+                />
+              )}
               <div>
-                <div className="font-display font-bold text-lg">Registered</div>
-                <p className="text-sm text-muted-foreground mt-1">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-lime-600 shrink-0" />
+                  <div className="font-display font-bold text-lg">Registered</div>
+                </div>
+                {profile.lastPhotoUpdate && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Registered {fmtMY(profile.lastPhotoUpdate, { dateStyle: "medium" })}
+                  </p>
+                )}
+                <p className="text-sm text-muted-foreground mt-2">
                   Your Face ID is verified and your photo is locked. To swap it you must request a
                   photo change — allowed once every {FACE_ID.COOLDOWN_DAYS} days, and never within{" "}
                   {FACE_ID.FREEZE_HOURS} hours of a scheduled exam.
                 </p>
               </div>
             </div>
+            {!profile.photoChangeEligible && profile.photoChangeReason && (
+              <p className="text-sm text-amber-600 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 shrink-0" />
+                {profile.photoChangeReason}
+              </p>
+            )}
             <WakeoutButton
               variant="secondary"
               size="default"
-              disabled={unlocking}
+              disabled={unlocking || !profile.photoChangeEligible}
               onClick={handleRequestChange}
             >
               {unlocking ? (
@@ -123,9 +144,18 @@ function FaceIdPage() {
       case "PENDING_REVIEW":
         return (
           <div className="flex items-start gap-3">
-            <Clock className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+            {profile.photoUrl && (
+              <img
+                src={profile.photoUrl}
+                alt=""
+                className="w-16 h-16 rounded-xl border-2 border-ink object-cover shrink-0"
+              />
+            )}
             <div>
-              <div className="font-display font-bold text-lg">Awaiting manual review</div>
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-amber-600 shrink-0" />
+                <div className="font-display font-bold text-lg">Awaiting manual review</div>
+              </div>
               <p className="text-sm text-muted-foreground mt-1">
                 Your registration is awaiting manual review by your lecturer or an admin. You'll be
                 notified as soon as it's decided — nothing else to do for now.
@@ -138,9 +168,18 @@ function FaceIdPage() {
         return (
           <div className="space-y-4">
             <div className="flex items-start gap-3">
-              <XCircle className="w-6 h-6 text-pink shrink-0 mt-0.5" />
+              {profile.photoUrl && (
+                <img
+                  src={profile.photoUrl}
+                  alt=""
+                  className="w-16 h-16 rounded-xl border-2 border-ink object-cover shrink-0"
+                />
+              )}
               <div>
-                <div className="font-display font-bold text-lg">Registration rejected</div>
+                <div className="flex items-center gap-2">
+                  <XCircle className="w-5 h-5 text-pink shrink-0" />
+                  <div className="font-display font-bold text-lg">Registration rejected</div>
+                </div>
                 <p className="text-sm text-muted-foreground mt-1">
                   {profile.rejectionReason ?? "Please re-register with a clearer passport photo."}
                 </p>

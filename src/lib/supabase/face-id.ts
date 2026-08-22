@@ -26,11 +26,43 @@ function base64ToBuffer(base64: string): Buffer {
   return Buffer.from(clean, "base64");
 }
 
+// Shared by getMyFacialProfile (display) and requestPhotoChange
+// (enforcement) so the two can never disagree. Looks at every exam in every
+// class the student is enrolled in — not just exams they already have a
+// submissions row for — so the 48-hour freeze also covers an upcoming exam
+// they haven't checked into yet.
+async function getPhotoChangeEligibility(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  lastPhotoUpdate: string | null,
+): Promise<{ allowed: boolean; reason?: string }> {
+  const { data: enrollRows } = await db(supabase)
+    .from("class_enrollments")
+    .select("classes(exams(start_time))")
+    .eq("student_id", userId);
+  const upcomingStarts = (enrollRows ?? [])
+    .flatMap((r: any) => r.classes?.exams ?? [])
+    .map((e: any) => e.start_time)
+    .filter(Boolean)
+    .map((s: string) => new Date(s));
+
+  return canRequestPhotoChange(
+    lastPhotoUpdate ? new Date(lastPhotoUpdate) : null,
+    upcomingStarts,
+    new Date(),
+    FACE_ID.COOLDOWN_DAYS,
+    FACE_ID.FREEZE_HOURS,
+  );
+}
+
 export type MyFacialProfile = {
   status: "UNREGISTERED" | "VERIFIED" | "PENDING_REVIEW" | "REJECTED";
   rejectionReason: string | null;
   isPhotoLocked: boolean;
   photoUrl: string | null;
+  lastPhotoUpdate: string | null;
+  photoChangeEligible: boolean;
+  photoChangeReason: string | null;
 };
 
 // GET: the caller's own Face ID registration status, so the student page can
@@ -48,17 +80,28 @@ export const getMyFacialProfile = createServerFn({ method: "GET" }).handler(
 
     const { data: profile } = await db(supabase)
       .from("user_facial_profiles")
-      .select("status, rejection_reason, is_photo_locked")
+      .select("status, rejection_reason, is_photo_locked, last_photo_update")
       .eq("user_id", user.id)
       .maybeSingle();
 
     const { photoUrl } = profile ? await signedFacialProfileUrls(user.id) : { photoUrl: null };
+
+    let photoChangeEligible = false;
+    let photoChangeReason: string | null = null;
+    if (profile?.status === "VERIFIED" && profile.is_photo_locked) {
+      const check = await getPhotoChangeEligibility(supabase, user.id, profile.last_photo_update);
+      photoChangeEligible = check.allowed;
+      photoChangeReason = check.reason ?? null;
+    }
 
     return {
       status: (profile?.status ?? "UNREGISTERED") as MyFacialProfile["status"],
       rejectionReason: profile?.rejection_reason ?? null,
       isPhotoLocked: profile?.is_photo_locked ?? false,
       photoUrl,
+      lastPhotoUpdate: profile?.last_photo_update ?? null,
+      photoChangeEligible,
+      photoChangeReason,
     };
   },
 );
@@ -117,22 +160,7 @@ export const requestPhotoChange = createServerFn({ method: "POST" }).handler(asy
     throw new Error("No locked photo to change.");
   }
 
-  const { data: examRows } = await db(supabase)
-    .from("submissions")
-    .select("exams(start_time)")
-    .eq("student_id", user.id);
-  const upcomingStarts = (examRows ?? [])
-    .map((r: any) => r.exams?.start_time)
-    .filter(Boolean)
-    .map((s: string) => new Date(s));
-
-  const check = canRequestPhotoChange(
-    profile.last_photo_update ? new Date(profile.last_photo_update) : null,
-    upcomingStarts,
-    new Date(),
-    FACE_ID.COOLDOWN_DAYS,
-    FACE_ID.FREEZE_HOURS,
-  );
+  const check = await getPhotoChangeEligibility(supabase, user.id, profile.last_photo_update);
   if (!check.allowed) throw new Error(check.reason);
 
   await createAdminClient()
