@@ -7,7 +7,9 @@ import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
 import { getExamForTaking, recordFlag, saveExamProgress, submitExam } from "@/lib/supabase/exams";
 import { recordHeartbeat } from "@/lib/supabase/proctor";
-import { AUTOSAVE, ESSAY, INTEGRITY } from "@/lib/constants";
+import { loadHuman, extractEmbedding } from "@/lib/face-id/embedding";
+import { checkIdentityContinuity } from "@/lib/supabase/face-id";
+import { AUTOSAVE, ESSAY, INTEGRITY, FACE_ID } from "@/lib/constants";
 import { Flag, Camera, ChevronLeft, ChevronRight, AlertTriangle, Maximize, X } from "lucide-react";
 import { toast } from "sonner";
 import { renderMarkdown, stripMarkdown } from "@/lib/render-text";
@@ -95,6 +97,30 @@ function TakeExam() {
     document.addEventListener("fullscreenchange", sync);
     return () => document.removeEventListener("fullscreenchange", sync);
   }, []);
+
+  // Periodic in-exam identity continuity re-check — reuses the same <video>
+  // element CameraProctor already renders (in `monitor` mode) rather than
+  // opening a second camera stream. Best-effort: a failed check (no face,
+  // model load error, etc.) is not itself a flag — only a confirmed mismatch,
+  // decided server-side, is.
+  useEffect(() => {
+    if (!exam.require_identity_verification) return;
+    const interval = setInterval(async () => {
+      const video = document.querySelector<HTMLVideoElement>("video");
+      if (!video) return;
+      try {
+        const human = await loadHuman();
+        const face = await extractEmbedding(human, video);
+        if (!face) return;
+        await checkIdentityContinuity({
+          data: { submissionId: submissionIdRef.current, embedding: face.embedding },
+        });
+      } catch {
+        // best-effort — a failed continuity check is not itself a flag
+      }
+    }, FACE_ID.CONTINUITY_CHECK_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [exam.require_identity_verification]);
 
   // Mirror of `answers` for async handlers (autosave, timer submit) that must
   // read the current value without being re-registered on every keystroke.

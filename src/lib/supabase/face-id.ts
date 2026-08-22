@@ -565,3 +565,48 @@ export const reviewCheckin = createServerFn({ method: "POST" })
 
     return { ok: true as const };
   });
+
+// POST: periodic in-exam identity continuity check. Called on an interval
+// while the student is taking an exam that requires identity verification.
+// Server-authoritative — always recomputes the match from the DB-stored
+// baseline embedding rather than trusting any client-reported result.
+export const checkIdentityContinuity = createServerFn({ method: "POST" })
+  .inputValidator((data: { submissionId: string; embedding: number[] }) => data)
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const { data: sub } = await db(supabase)
+      .from("submissions")
+      .select("id, status, student_id")
+      .eq("id", data.submissionId)
+      .eq("student_id", user.id)
+      .maybeSingle();
+    if (!sub || sub.status !== "in-progress") return { match: true as const, score: 1 };
+
+    const { data: profile } = await db(supabase)
+      .from("user_facial_profiles")
+      .select("baseline_embedding")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!profile?.baseline_embedding) return { match: true as const, score: 1 };
+
+    const score = cosineSimilarity(profile.baseline_embedding as number[], data.embedding);
+    const match = score >= FACE_ID.MATCH_THRESHOLD;
+
+    if (!match) {
+      const admin = createAdminClient();
+      await admin.from("flag_reasons").insert({
+        submission_id: data.submissionId,
+        time: new Date().toLocaleTimeString("en-MY", { timeStyle: "short", timeZone: "Asia/Kuala_Lumpur" }),
+        type: "identity-mismatch",
+        label: "Identity re-check did not match the registered profile",
+        confidence_score: score,
+      });
+    }
+
+    return { match, score };
+  });

@@ -6,6 +6,7 @@ import { writeAudit } from "./audit";
 import { verifyExamToken } from "./exam-session-token";
 import { INTEGRITY, ESSAY, APPEAL } from "@/lib/constants";
 import { MY_TZ } from "@/lib/datetime";
+import { computeTrustScore } from "@/lib/face-id/trust-score";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
@@ -1089,7 +1090,9 @@ export const getExamForTaking = createServerFn({ method: "GET" })
 
     const { data: exam, error } = await db(supabase)
       .from("exams")
-      .select("id, title, duration, end_time, require_camera, shuffle, class_id, classes(code)")
+      .select(
+        "id, title, duration, end_time, require_camera, require_identity_verification, shuffle, class_id, classes(code)",
+      )
       .eq("id", examId)
       .single();
 
@@ -1177,6 +1180,7 @@ export const getExamForTaking = createServerFn({ method: "GET" })
         duration: exam.duration,
         end_time: exam.end_time,
         require_camera: exam.require_camera ?? false,
+        require_identity_verification: exam.require_identity_verification ?? false,
       },
       submission: sub ? { id: sub.id, status: sub.status } : null,
       remainingSeconds,
@@ -1463,6 +1467,12 @@ export const submitExam = createServerFn({ method: "POST" })
         });
     }
 
+    const { data: allFlags } = await db(supabase)
+      .from("flag_reasons")
+      .select("type")
+      .eq("submission_id", data.submissionId);
+    const trustScore = computeTrustScore(allFlags ?? []);
+
     const { error } = await db(supabase)
       .from("submissions")
       .update({
@@ -1470,6 +1480,7 @@ export const submitExam = createServerFn({ method: "POST" })
         score,
         auto_score: score,
         submitted_at: new Date().toISOString(),
+        trust_score: trustScore,
         ...(lateSubmission ? { appeal_required: true } : {}),
       })
       .eq("id", data.submissionId);
