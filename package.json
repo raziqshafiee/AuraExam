@@ -35,7 +35,8 @@
     "migrate:grade-config": "tsx scripts/migrate-grade-config.ts",
     "migrate:exam-shuffle": "tsx scripts/migrate-exam-shuffle.ts",
     "migrate:profile-trigger": "tsx scripts/migrate-profile-trigger.ts",
-    "migrate:face-id": "tsx scripts/migrate-face-id.ts"
+    "migrate:face-id": "tsx scripts/migrate-face-id.ts",
+    "migrate:face-id-rls": "tsx scripts/migrate-face-id-rls.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",

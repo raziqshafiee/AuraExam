@@ -297,7 +297,10 @@ export const getLecturerExams = createServerFn({ method: "GET" }).handler(async 
       .from("submissions")
       .select("exam_id, score, total, status")
       .in("exam_id", examIds)
-      .neq("status", "in-progress");
+      // Neither an unfinished attempt nor a Face ID check-in that never became
+      // an attempt counts as a submission.
+      .neq("status", "in-progress")
+      .neq("status", "checkin-pending");
     for (const s of (subs ?? []) as any[]) {
       if (!subStats[s.exam_id])
         subStats[s.exam_id] = { count: 0, pctSum: 0, pctCount: 0, essaysPending: 0 };
@@ -618,10 +621,13 @@ export const unpublishExam = createServerFn({ method: "POST" })
       throw new Error("Cannot unpublish — the exam window has already opened");
     }
 
+    // A 'checkin-pending' row means the student only reached the Face ID lobby
+    // — they never started the paper, so it must not block an unpublish.
     const { count } = await db(supabase)
       .from("submissions")
       .select("id", { count: "exact", head: true })
-      .eq("exam_id", id);
+      .eq("exam_id", id)
+      .neq("status", "checkin-pending");
 
     if (count && count > 0) {
       throw new Error("Cannot unpublish — students have already started this exam");
@@ -1110,10 +1116,17 @@ export const getExamForTaking = createServerFn({ method: "GET" })
 
     const { data: sub } = await db(supabase)
       .from("submissions")
-      .select("id, status, started_at, created_at")
+      .select("id, status, started_at, created_at, checkin_status")
       .eq("exam_id", examId)
       .eq("student_id", user.id)
       .maybeSingle();
+
+    // Face ID exams: question content is gated on a cleared check-in, so a
+    // student who failed or was rejected at the lobby cannot read the paper by
+    // navigating straight to the take-page URL.
+    if (exam.require_identity_verification && sub?.checkin_status !== "verified") {
+      throw new Error("Face ID check-in required — please check in from the exam lobby first.");
+    }
 
     const deadlineMs = computeDeadlineMs(sub, exam);
     const remainingSeconds = Math.max(0, Math.floor((deadlineMs - Date.now()) / 1000));
@@ -1240,7 +1253,7 @@ export const startExam = createServerFn({ method: "POST" })
 
     const existing = await db(supabase)
       .from("submissions")
-      .select("id, status, started_at")
+      .select("id, status, started_at, checkin_status")
       .eq("exam_id", examId)
       .eq("student_id", user.id)
       .maybeSingle();
@@ -1256,6 +1269,12 @@ export const startExam = createServerFn({ method: "POST" })
           submissionId: sub.id,
         });
         if (!valid) throw new Error("Your check-in session has expired — please check in again.");
+        // Token validity alone is not enough: it was minted at check-in time
+        // and an invigilator may have rejected the student since. The DB row is
+        // the authority on whether the check-in still stands.
+        if (sub.checkin_status !== "verified") {
+          throw new Error("Your check-in is no longer valid — please check in again.");
+        }
         await db(supabase)
           .from("submissions")
           .update({
@@ -1488,12 +1507,20 @@ export const submitExam = createServerFn({ method: "POST" })
         score,
         auto_score: score,
         submitted_at: new Date().toISOString(),
-        trust_score: trustScore,
         ...(lateSubmission ? { appeal_required: true } : {}),
       })
       .eq("id", data.submissionId);
 
     if (error) throw new Error(error.message);
+
+    // trust_score is a server-owned column — UPDATE on it is revoked from
+    // `authenticated` (scripts/migrate-face-id-rls.ts) so a student cannot
+    // inflate their own integrity score, hence the service-role write.
+    // Ownership + in-progress state were already verified above.
+    await createAdminClient()
+      .from("submissions")
+      .update({ trust_score: trustScore })
+      .eq("id", data.submissionId);
 
     return { success: true as const, score, lateSubmission };
   });

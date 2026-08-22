@@ -7,15 +7,56 @@ import { cosineSimilarity } from "@/lib/face-id/compare";
 import { nextRegistrationOutcome, canRequestPhotoChange } from "@/lib/face-id/business-rules";
 import { FACE_ID } from "@/lib/constants";
 import { signExamToken } from "./exam-session-token";
+import { MY_TZ } from "@/lib/datetime";
+import { PROCTOR_SNAPSHOT_BUCKET } from "./proctor";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase as any;
 
 const FACIAL_PROFILES_BUCKET = "facial-profiles";
 
+// user_facial_profiles is RLS-protected with an owner-SELECT policy and NO
+// write policy (see scripts/migrate-face-id-rls.ts): reads may run in the
+// caller's context, but every write must go through the service-role client
+// or a student could self-verify by PATCHing status='VERIFIED' onto their own
+// row. Same rule for the check-in columns on `submissions`, whose UPDATE
+// privilege has been revoked from `authenticated`.
+
 function base64ToBuffer(base64: string): Buffer {
   const clean = base64.includes(",") ? base64.split(",")[1] : base64;
   return Buffer.from(clean, "base64");
 }
+
+export type MyFacialProfile = {
+  status: "UNREGISTERED" | "VERIFIED" | "PENDING_REVIEW" | "REJECTED";
+  rejectionReason: string | null;
+  isPhotoLocked: boolean;
+};
+
+// GET: the caller's own Face ID registration status, so the student page can
+// show where they stand instead of always restarting at the upload step.
+// Reads run in the caller's context — the owner-SELECT RLS policy is what
+// scopes this to their own row.
+export const getMyFacialProfile = createServerFn({ method: "GET" }).handler(
+  async (): Promise<MyFacialProfile> => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const { data: profile } = await db(supabase)
+      .from("user_facial_profiles")
+      .select("status, rejection_reason, is_photo_locked")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    return {
+      status: (profile?.status ?? "UNREGISTERED") as MyFacialProfile["status"],
+      rejectionReason: profile?.rejection_reason ?? null,
+      isPhotoLocked: profile?.is_photo_locked ?? false,
+    };
+  },
+);
 
 // POST: upload a passport photo. Does not lock/verify — that happens in
 // verifyEnrolment once the live-frame match succeeds.
@@ -45,7 +86,7 @@ export const registerPassportPhoto = createServerFn({ method: "POST" })
       .upload(path, base64ToBuffer(data.photoBase64), { contentType: "image/jpeg", upsert: true });
     if (uploadError) throw new Error(uploadError.message);
 
-    await db(supabase)
+    await admin
       .from("user_facial_profiles")
       .upsert({ user_id: user.id, photo_url: path, status: profile ? undefined : "UNREGISTERED" });
 
@@ -89,7 +130,7 @@ export const requestPhotoChange = createServerFn({ method: "POST" }).handler(asy
   );
   if (!check.allowed) throw new Error(check.reason);
 
-  await db(supabase)
+  await createAdminClient()
     .from("user_facial_profiles")
     .update({ is_photo_locked: false, verification_attempts: 0 })
     .eq("user_id", user.id);
@@ -135,8 +176,10 @@ export const verifyEnrolment = createServerFn({ method: "POST" })
       FACE_ID.MAX_ENROLL_ATTEMPTS,
     );
 
+    const admin = createAdminClient();
+
     if (outcome.status === "VERIFIED") {
-      await db(supabase).from("user_facial_profiles").upsert({
+      await admin.from("user_facial_profiles").upsert({
         user_id: user.id,
         status: "VERIFIED",
         baseline_embedding: data.liveEmbedding,
@@ -156,7 +199,6 @@ export const verifyEnrolment = createServerFn({ method: "POST" })
 
     if (outcome.status === "PENDING_REVIEW") {
       if (data.liveSnapshotBase64) {
-        const admin = createAdminClient();
         await admin.storage
           .from(FACIAL_PROFILES_BUCKET)
           .upload(`${user.id}/review-${Date.now()}.jpg`, base64ToBuffer(data.liveSnapshotBase64), {
@@ -164,7 +206,7 @@ export const verifyEnrolment = createServerFn({ method: "POST" })
             upsert: true,
           });
       }
-      await db(supabase).from("user_facial_profiles").upsert({
+      await admin.from("user_facial_profiles").upsert({
         user_id: user.id,
         status: "PENDING_REVIEW",
         pending_embedding: data.liveEmbedding,
@@ -178,27 +220,30 @@ export const verifyEnrolment = createServerFn({ method: "POST" })
       return { status: "PENDING_REVIEW" as const, score };
     }
 
-    await db(supabase)
-      .from("user_facial_profiles")
-      .upsert({
-        user_id: user.id,
-        status: "UNREGISTERED",
-        verification_attempts: FACE_ID.MAX_ENROLL_ATTEMPTS - outcome.attemptsRemaining,
-      });
+    await admin.from("user_facial_profiles").upsert({
+      user_id: user.id,
+      status: "UNREGISTERED",
+      verification_attempts: FACE_ID.MAX_ENROLL_ATTEMPTS - outcome.attemptsRemaining,
+    });
     return { status: "RETRY" as const, score, attemptsRemaining: outcome.attemptsRemaining };
   });
 
+// Signs the two images a reviewer needs side by side: the registered passport
+// photo and the most recent live snapshot matching `snapshotPrefix`. Snapshot
+// filenames embed a millisecond timestamp, so a descending name sort puts the
+// newest one first.
 async function signedFacialProfileUrls(
   userId: string,
+  snapshotPrefix = "review-",
 ): Promise<{ photoUrl: string | null; snapshotUrl: string | null }> {
   const admin = createAdminClient();
   const { data: files } = await admin.storage.from(FACIAL_PROFILES_BUCKET).list(userId, {
-    limit: 100,
+    limit: 1000,
     sortBy: { column: "name", order: "desc" },
   });
   const names = (files ?? []).map((f: any) => f.name);
   const passportName = names.find((n: string) => n === "passport.jpg");
-  const snapshotName = names.find((n: string) => n.startsWith("review-"));
+  const snapshotName = names.find((n: string) => n.startsWith(snapshotPrefix));
 
   const paths = [passportName, snapshotName].filter(Boolean).map((n) => `${userId}/${n}`);
   if (paths.length === 0) return { photoUrl: null, snapshotUrl: null };
@@ -364,7 +409,9 @@ type CheckInExamResult =
 // at the exam lobby. On success mints a short-lived signed token that
 // startExam requires before it will admit the student.
 export const checkInExam = createServerFn({ method: "POST" })
-  .inputValidator((data: { examId: string; embedding: number[] }) => data)
+  .inputValidator(
+    (data: { examId: string; embedding: number[]; liveSnapshotBase64?: string }) => data,
+  )
   .handler(async ({ data }): Promise<CheckInExamResult> => {
     const supabase = createClient();
     const {
@@ -384,12 +431,16 @@ export const checkInExam = createServerFn({ method: "POST" })
 
     const { data: exam } = await db(supabase)
       .from("exams")
-      .select("class_id, duration, end_time, require_identity_verification")
+      .select("status, class_id, duration, end_time, require_identity_verification")
       .eq("id", data.examId)
       .single();
     if (!exam) throw new Error("Exam not found");
     if (!exam.require_identity_verification)
       throw new Error("This exam does not require Face ID check-in.");
+    // Mirrors startExam's own window guard: checking in before the exam opens
+    // (or after it closes) would leave an orphaned 'checkin-pending' row that
+    // can never be started.
+    if (exam.status !== "live") throw new Error("This exam is not open for check-in yet.");
 
     const { data: enrollment } = await db(supabase)
       .from("class_enrollments")
@@ -407,6 +458,25 @@ export const checkInExam = createServerFn({ method: "POST" })
         { sub: user.id, examId: data.examId, submissionId },
         new Date(deadlineMs + FACE_ID.TOKEN_BUFFER_MS),
       );
+
+    // The check-in columns on `submissions` are server-owned — UPDATE on them
+    // is revoked from `authenticated`, so every write below runs service-role.
+    const admin = createAdminClient();
+
+    // Evidence for the invigilator queue: the live frame that failed to match,
+    // stored next to the student's registered passport photo. Best-effort —
+    // losing the snapshot must never block the check-in decision itself.
+    const uploadCheckinSnapshot = async (submissionId: string) => {
+      if (!data.liveSnapshotBase64) return;
+      await admin.storage
+        .from(FACIAL_PROFILES_BUCKET)
+        .upload(
+          `${user.id}/checkin-${submissionId}-${Date.now()}.jpg`,
+          base64ToBuffer(data.liveSnapshotBase64),
+          { contentType: "image/jpeg", upsert: true },
+        )
+        .catch(() => {});
+    };
 
     const existing = await db(supabase)
       .from("submissions")
@@ -435,7 +505,7 @@ export const checkInExam = createServerFn({ method: "POST" })
       const attempts = (sub.checkin_attempts ?? 0) + 1;
 
       if (score >= FACE_ID.MATCH_THRESHOLD) {
-        await db(supabase)
+        await admin
           .from("submissions")
           .update({
             checkin_status: "verified",
@@ -451,7 +521,7 @@ export const checkInExam = createServerFn({ method: "POST" })
         };
       }
       if (attempts >= FACE_ID.MAX_CHECKIN_ATTEMPTS) {
-        await db(supabase)
+        await admin
           .from("submissions")
           .update({
             checkin_status: "checkin-pending-review",
@@ -459,9 +529,10 @@ export const checkInExam = createServerFn({ method: "POST" })
             checkin_attempts: attempts,
           })
           .eq("id", sub.id);
+        await uploadCheckinSnapshot(sub.id);
         return { outcome: "checkin-pending-review" as const, submissionId: sub.id };
       }
-      await db(supabase)
+      await admin
         .from("submissions")
         .update({ check_in_score: score, checkin_attempts: attempts })
         .eq("id", sub.id);
@@ -480,7 +551,7 @@ export const checkInExam = createServerFn({ method: "POST" })
     // manual-review wait) never eats into the exam's allotted duration.
     const score = cosineSimilarity(profile.baseline_embedding as number[], data.embedding);
     const passed = score >= FACE_ID.MATCH_THRESHOLD;
-    const { data: sub, error } = await db(supabase)
+    const { data: sub, error } = await admin
       .from("submissions")
       .insert({
         exam_id: data.examId,
@@ -545,12 +616,19 @@ export const getCheckinQueue = createServerFn({ method: "GET" }).handler(async (
 
   return Promise.all(
     (rows ?? []).map(async (r: any) => {
-      const { snapshotUrl } = await signedFacialProfileUrls(r.student_id);
+      // Registered passport photo + the live frame captured when this
+      // student's check-in ran out of attempts, so the invigilator compares
+      // the same two faces the matcher did.
+      const { photoUrl, snapshotUrl } = await signedFacialProfileUrls(
+        r.student_id,
+        `checkin-${r.id}-`,
+      );
       return {
         submissionId: r.id as string,
         studentName: r.profiles?.name ?? "Unknown",
         examTitle: r.exams?.title ?? "Untitled exam",
         score: r.check_in_score as number | null,
+        photoUrl,
         snapshotUrl,
       };
     }),
@@ -609,7 +687,9 @@ export const reviewCheckin = createServerFn({ method: "POST" })
 // Server-authoritative — always recomputes the match from the DB-stored
 // baseline embedding rather than trusting any client-reported result.
 export const checkIdentityContinuity = createServerFn({ method: "POST" })
-  .inputValidator((data: { submissionId: string; embedding: number[] }) => data)
+  .inputValidator(
+    (data: { submissionId: string; embedding: number[]; snapshotBase64?: string }) => data,
+  )
   .handler(async ({ data }) => {
     const supabase = createClient();
     const {
@@ -637,15 +717,32 @@ export const checkIdentityContinuity = createServerFn({ method: "POST" })
 
     if (!match) {
       const admin = createAdminClient();
+
+      // Store the frame that failed the re-check so the lecturer can see who
+      // was actually in front of the camera. Same bucket + path convention as
+      // the rest of the proctor snapshots ({submissionId}/{timestamp}.jpg).
+      let snapshotUrl: string | null = null;
+      if (data.snapshotBase64) {
+        const path = `${data.submissionId}/${Date.now()}.jpg`;
+        const { error: uploadError } = await admin.storage
+          .from(PROCTOR_SNAPSHOT_BUCKET)
+          .upload(path, base64ToBuffer(data.snapshotBase64), {
+            contentType: "image/jpeg",
+            upsert: true,
+          });
+        if (!uploadError) snapshotUrl = path;
+      }
+
       await admin.from("flag_reasons").insert({
         submission_id: data.submissionId,
         time: new Date().toLocaleTimeString("en-MY", {
           timeStyle: "short",
-          timeZone: "Asia/Kuala_Lumpur",
+          timeZone: MY_TZ,
         }),
         type: "identity-mismatch",
         label: "Identity re-check did not match the registered profile",
         confidence_score: score,
+        snapshot_url: snapshotUrl,
       });
     }
 
