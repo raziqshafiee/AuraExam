@@ -35,4 +35,21 @@ describe("exam session token", () => {
     const ok = await verifyExamToken("not-a-jwt", payload, SECRET);
     expect(ok).toBe(false);
   });
+
+  // An unset EXAM_SESSION_SECRET resolves to "" and used to reach jose, which
+  // threw an opaque DataError. It must fail fast with a diagnosable message —
+  // and a short secret must never be allowed to sign an exam-entry token.
+  it.each([
+    ["an empty secret", ""],
+    ["a too-short secret", "short-secret"],
+  ])("refuses to sign with %s", async (_label, badSecret) => {
+    await expect(signExamToken(payload, new Date(Date.now() + 60_000), badSecret)).rejects.toThrow(
+      /EXAM_SESSION_SECRET/,
+    );
+  });
+
+  it("throws (rather than silently returning false) when verifying with an empty secret", async () => {
+    const token = await signExamToken(payload, new Date(Date.now() + 60_000), SECRET);
+    await expect(verifyExamToken(token, payload, "")).rejects.toThrow(/EXAM_SESSION_SECRET/);
+  });
 });
