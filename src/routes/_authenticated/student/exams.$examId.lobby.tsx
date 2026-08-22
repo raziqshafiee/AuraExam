@@ -250,89 +250,91 @@ function Lobby() {
         </Card>
       )}
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <Card>
-          <div className="flex items-center justify-between mb-3">
-            <div className="font-display font-bold text-xl">Camera check</div>
-            {exam.require_camera ? (
-              <span className="px-2.5 py-1 rounded-full border-2 border-ink text-[10px] font-mono uppercase tracking-widest bg-violet text-violet-foreground">
-                Required
-              </span>
-            ) : (
-              <span className="px-2.5 py-1 rounded-full border-2 border-ink/30 text-[10px] font-mono uppercase tracking-widest text-ink/40">
-                Not required
-              </span>
-            )}
-          </div>
-          {exam.require_camera ? (
-            <CameraProctor mode="setup" onReady={setCameraReady} />
-          ) : (
-            <div className="aspect-video rounded-2xl border-2 border-ink/20 bg-secondary flex flex-col items-center justify-center gap-2 text-muted-foreground">
-              <VideoOff className="w-10 h-10" />
-              <p className="text-sm">No camera required for this exam.</p>
+      {(!exam.require_identity_verification || checkinToken) && (
+        <div className="grid lg:grid-cols-2 gap-6">
+          <Card>
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-display font-bold text-xl">Camera check</div>
+              {exam.require_camera ? (
+                <span className="px-2.5 py-1 rounded-full border-2 border-ink text-[10px] font-mono uppercase tracking-widest bg-violet text-violet-foreground">
+                  Required
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 rounded-full border-2 border-ink/30 text-[10px] font-mono uppercase tracking-widest text-ink/40">
+                  Not required
+                </span>
+              )}
             </div>
-          )}
-        </Card>
-        <Card>
-          <div className="font-display font-bold text-xl mb-3">Before you start</div>
-          <ul className="space-y-3 text-sm">
-            <li className="flex gap-3">
-              <ShieldCheck className="w-5 h-5 text-violet shrink-0" />
-              Right-click, copy/paste, and tab-switch will be disabled.
-            </li>
-            <li className="flex gap-3">
-              <MonitorPlay className="w-5 h-5 text-pink shrink-0" />
-              The exam opens in fullscreen. Exiting fullscreen or switching tabs counts as a flag.
-            </li>
-            <li className="flex gap-3">
-              <AlertTriangle className="w-5 h-5 text-amber shrink-0" />
-              3+ flags = auto-submit. Score is locked at 0 — you may file an integrity appeal within
-              7 days or you receive 0.
-            </li>
-            <li className="flex gap-3">
-              <Clock className="w-5 h-5 text-sky shrink-0" />
-              Exam closes at {fmt(exam.end_time)}. Submission is forced at that time.
-            </li>
-            <li className="flex gap-3">
-              <Camera className="w-5 h-5 text-violet shrink-0" />
-              {exam.require_camera
-                ? "Your camera is monitored during the exam — periodic snapshots are saved for your lecturer to review."
-                : "On-screen monitoring is recorded for review."}{" "}
-              These checks are a deterrent to help keep the exam fair, not a guarantee — academic
-              integrity remains your responsibility.
-            </li>
-          </ul>
-          <label className="mt-5 flex items-center gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              className="w-4 h-4 border-2 border-ink"
-              checked={agreed}
-              onChange={(e) => setAgreed(e.target.checked)}
-            />{" "}
-            I've read the rules and I'm ready.
-          </label>
-          {exam.require_camera && !cameraReady && (
-            <p className="mt-4 flex items-center gap-1.5 text-sm text-amber-600">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              Complete the camera check on the left to continue.
-            </p>
-          )}
-          <WakeoutButton
-            variant="primary"
-            size="default"
-            disabled={
-              !agreed ||
-              starting ||
-              (exam.require_camera && !cameraReady) ||
-              (exam.require_identity_verification && !checkinToken)
-            }
-            onClick={handleStart}
-            className="mt-4 w-full rounded-2xl"
-          >
-            {starting ? "Starting…" : "Start exam →"}
-          </WakeoutButton>
-        </Card>
-      </div>
+            {exam.require_camera ? (
+              <CameraProctor mode="setup" onReady={setCameraReady} />
+            ) : (
+              <div className="aspect-video rounded-2xl border-2 border-ink/20 bg-secondary flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                <VideoOff className="w-10 h-10" />
+                <p className="text-sm">No camera required for this exam.</p>
+              </div>
+            )}
+          </Card>
+          <Card>
+            <div className="font-display font-bold text-xl mb-3">Before you start</div>
+            <ul className="space-y-3 text-sm">
+              <li className="flex gap-3">
+                <ShieldCheck className="w-5 h-5 text-violet shrink-0" />
+                Right-click, copy/paste, and tab-switch will be disabled.
+              </li>
+              <li className="flex gap-3">
+                <MonitorPlay className="w-5 h-5 text-pink shrink-0" />
+                The exam opens in fullscreen. Exiting fullscreen or switching tabs counts as a flag.
+              </li>
+              <li className="flex gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber shrink-0" />
+                3+ flags = auto-submit. Score is locked at 0 — you may file an integrity appeal
+                within 7 days or you receive 0.
+              </li>
+              <li className="flex gap-3">
+                <Clock className="w-5 h-5 text-sky shrink-0" />
+                Exam closes at {fmt(exam.end_time)}. Submission is forced at that time.
+              </li>
+              <li className="flex gap-3">
+                <Camera className="w-5 h-5 text-violet shrink-0" />
+                {exam.require_camera
+                  ? "Your camera is monitored during the exam — periodic snapshots are saved for your lecturer to review."
+                  : "On-screen monitoring is recorded for review."}{" "}
+                These checks are a deterrent to help keep the exam fair, not a guarantee — academic
+                integrity remains your responsibility.
+              </li>
+            </ul>
+            <label className="mt-5 flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                className="w-4 h-4 border-2 border-ink"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+              />{" "}
+              I've read the rules and I'm ready.
+            </label>
+            {exam.require_camera && !cameraReady && (
+              <p className="mt-4 flex items-center gap-1.5 text-sm text-amber-600">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                Complete the camera check on the left to continue.
+              </p>
+            )}
+            <WakeoutButton
+              variant="primary"
+              size="default"
+              disabled={
+                !agreed ||
+                starting ||
+                (exam.require_camera && !cameraReady) ||
+                (exam.require_identity_verification && !checkinToken)
+              }
+              onClick={handleStart}
+              className="mt-4 w-full rounded-2xl"
+            >
+              {starting ? "Starting…" : "Start exam →"}
+            </WakeoutButton>
+          </Card>
+        </div>
+      )}
     </>
   );
 }
