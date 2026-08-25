@@ -60,11 +60,13 @@ export const getStudentClasses = createServerFn({ method: "GET" })
       .from("class_enrollments")
       .select("class_id");
 
-    return (enrollments as any[]).map((e: any) => ({
-      ...e.classes,
-      lecturer: e.classes?.profiles?.name || "Unknown",
-      students: (allEnrollments as any[])?.filter((cnt: any) => cnt.class_id === e.class_id).length || 0,
-    }));
+    return (enrollments as any[])
+      .filter((e: any) => !e.classes?.archived_at)
+      .map((e: any) => ({
+        ...e.classes,
+        lecturer: e.classes?.profiles?.name || "Unknown",
+        students: (allEnrollments as any[])?.filter((cnt: any) => cnt.class_id === e.class_id).length || 0,
+      }));
   });
 
 export const getClassDetail = createServerFn({ method: "GET" })
@@ -134,6 +136,81 @@ export const createClass = createServerFn({ method: "POST" })
 
     if (error) throw new Error(error.message);
     return newClass;
+  });
+
+export const updateClass = createServerFn({ method: "POST" })
+  .inputValidator((data: { classId: string; name: string; code: string; color: string }) => data)
+  .handler(async ({ data }) => {
+    const supabase = createClient();
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
+
+    const { data: updated, error } = await db(supabase)
+      .from("classes")
+      .update({ name: data.name, code: data.code, color: data.color })
+      .eq("id", data.classId)
+      .eq("lecturer_id", user.id)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+    return updated;
+  });
+
+export const archiveClass = createServerFn({ method: "POST" })
+  .inputValidator((classId: string) => classId)
+  .handler(async ({ data: classId }) => {
+    const supabase = createClient();
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
+
+    const { error } = await db(supabase)
+      .from("classes")
+      .update({ archived_at: new Date().toISOString() })
+      .eq("id", classId)
+      .eq("lecturer_id", user.id);
+
+    if (error) throw new Error(error.message);
+    return { success: true };
+  });
+
+export const unarchiveClass = createServerFn({ method: "POST" })
+  .inputValidator((classId: string) => classId)
+  .handler(async ({ data: classId }) => {
+    const supabase = createClient();
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
+
+    const { error } = await db(supabase)
+      .from("classes")
+      .update({ archived_at: null })
+      .eq("id", classId)
+      .eq("lecturer_id", user.id);
+
+    if (error) throw new Error(error.message);
+    return { success: true };
+  });
+
+export const deleteEmptyClass = createServerFn({ method: "POST" })
+  .inputValidator((classId: string) => classId)
+  .handler(async ({ data: classId }) => {
+    const supabase = createClient();
+    const { user } = await requireRole("lecturer", supabase, "Unauthorized");
+
+    const { count } = await db(supabase)
+      .from("class_enrollments")
+      .select("*", { count: "exact", head: true })
+      .eq("class_id", classId);
+
+    if ((count ?? 0) > 0) {
+      throw new Error("This class has enrolled students — archive it instead of deleting");
+    }
+
+    const { error } = await db(supabase)
+      .from("classes")
+      .delete()
+      .eq("id", classId)
+      .eq("lecturer_id", user.id);
+
+    if (error) throw new Error(error.message);
+    return { success: true };
   });
 
 export const postAnnouncement = createServerFn({ method: "POST" })
