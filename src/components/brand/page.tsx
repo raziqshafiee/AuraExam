@@ -36,7 +36,7 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
 export function Stat({ label, value, color = "bg-card" }: { label: string; value: string | number; color?: string }) {
   return (
     <div className={`rounded-3xl border-2 border-ink p-5 shadow-brut ${color}`}>
-      <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label}</div>
+      <div className="text-xs font-mono font-semibold uppercase tracking-widest text-ink">{label}</div>
       <div className="mt-2 font-display font-extrabold text-4xl">{value}</div>
     </div>
   );

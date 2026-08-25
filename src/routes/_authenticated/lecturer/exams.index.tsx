@@ -246,15 +246,15 @@ function LecturerExams() {
                     <table className="w-full text-sm border-t-2 border-ink/10">
                       <thead>
                         <tr className="bg-ink/5 text-left">
-                          <th className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Class</th>
-                          <th className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Title</th>
-                          <th className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground whitespace-nowrap">Date</th>
-                          <th className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground whitespace-nowrap">Duration</th>
-                          <th className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground whitespace-nowrap">Submitted</th>
-                          <th className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Actions</th>
+                          <th className="px-4 py-2.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-ink/70">Class</th>
+                          <th className="px-4 py-2.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-ink/70">Title</th>
+                          <th className="px-4 py-2.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-ink/70 whitespace-nowrap">Date</th>
+                          <th className="px-4 py-2.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-ink/70 whitespace-nowrap">Duration</th>
+                          <th className="px-4 py-2.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-ink/70 whitespace-nowrap">Submitted</th>
+                          <th className="px-4 py-2.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-ink/70">Actions</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-ink/10 bg-background/60">
+                      <tbody className="divide-y divide-ink/10 bg-card">
                         {items.map((e) => (
                           <tr key={e.id} className="hover:bg-ink/5 transition-colors">
                             <td className="px-4 py-3 whitespace-nowrap">
@@ -262,7 +262,14 @@ function LecturerExams() {
                             </td>
 
                             <td className="px-4 py-3 min-w-[180px]">
-                              <div className="font-display font-bold leading-tight">{e.title}</div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <div className="font-display font-bold leading-tight">{e.title}</div>
+                                {e.essaysPending > 0 && (
+                                  <span className="px-2 py-0.5 rounded-full border border-violet/40 bg-violet/10 text-violet text-[10px] font-mono font-bold uppercase tracking-wide whitespace-nowrap">
+                                    Needs grading
+                                  </span>
+                                )}
+                              </div>
                               <Countdown exam={e} now={now} />
                             </td>
 

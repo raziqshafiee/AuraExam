@@ -9,7 +9,6 @@ import {
   BookOpen,
   ChevronRight,
   Clock,
-  FileText,
   Radio,
   ShieldAlert,
   Users,
@@ -99,8 +98,8 @@ function LecturerDashboard() {
       />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-        <Stat label="Classes" value={(classes as any[]).length} color="bg-violet" />
-        <Stat label="Question bank" value={questionsCount as number} color="bg-lime" />
+        <Stat label="Classes" value={(classes as any[]).length} color="bg-lime" />
+        <Stat label="Question bank" value={questionsCount as number} color="bg-sky" />
         <Stat label="Pending essays" value={pendingEssaysCount as number} color="bg-amber" />
         <Stat label="Pending appeals" value={(pendingAppeals as any[]).length} color="bg-pink" />
       </div>
@@ -236,101 +235,121 @@ function LecturerDashboard() {
         {classSummaries.length === 0 ? (
           <Empty title="No classes yet" />
         ) : (
-          <div className="space-y-4">
-            {classSummaries.map(({ cls, nextExam, activeAssignments, enrolled }) => (
-              <Card key={cls.id} className="p-0 overflow-hidden">
-                {/* Class header */}
-                <div className="flex items-center justify-between px-5 py-3 bg-ink/5 border-b-2 border-ink/10">
-                  <div className="flex items-center gap-3">
-                    <span className="px-2.5 py-0.5 rounded-full border-2 border-ink text-[10px] font-mono font-bold uppercase bg-violet tracking-widest shrink-0 text-white">
-                      {cls.code}
-                    </span>
-                    <div>
-                      <div className="font-display font-bold text-base leading-tight">{cls.name}</div>
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Users className="w-3 h-3" />
-                        {enrolled} student{enrolled !== 1 ? "s" : ""}
-                      </div>
-                    </div>
-                  </div>
-                  <Link to="/lecturer/classes/$classId" params={{ classId: cls.id }}>
-                    <ChevronRight className="w-5 h-5 text-muted-foreground hover:text-ink transition-colors" />
-                  </Link>
-                </div>
-
-                <div className="px-5 py-4 grid sm:grid-cols-2 gap-4">
-                  {/* Next exam */}
-                  <div>
-                    <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-1.5">
-                      Next Exam
-                    </div>
-                    {nextExam ? (
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`px-2 py-0.5 rounded-full border border-ink text-[10px] font-mono uppercase tracking-widest ${STATUS_COLORS[nextExam.status] ?? "bg-card"}`}>
-                            {nextExam.status}
+          <div className="rounded-3xl border-2 border-ink bg-card shadow-brut overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-ink/5 text-left">
+                    <th className="px-5 py-3 font-mono text-[10px] uppercase tracking-widest text-ink/70 font-semibold">Class</th>
+                    <th className="px-5 py-3 font-mono text-[10px] uppercase tracking-widest text-ink/70 font-semibold">Next exam</th>
+                    <th className="px-5 py-3 font-mono text-[10px] uppercase tracking-widest text-ink/70 font-semibold">Assignments</th>
+                    <th className="px-5 py-3 font-mono text-[10px] uppercase tracking-widest text-ink/70 font-semibold">Enrolled</th>
+                    <th className="px-5 py-3 font-mono text-[10px] uppercase tracking-widest text-ink/70 font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y-2 divide-ink/10">
+                  {classSummaries.map(({ cls, nextExam, activeAssignments, enrolled }) => (
+                    <tr key={cls.id} className="hover:bg-ink/5 transition-colors align-top">
+                      <td className="px-5 py-4 min-w-[180px]">
+                        <Link
+                          to="/lecturer/classes/$classId"
+                          params={{ classId: cls.id }}
+                          className="inline-flex flex-col items-start gap-1.5 group"
+                        >
+                          <span className="px-2.5 py-0.5 rounded-full border-2 border-ink text-[10px] font-mono font-bold uppercase bg-violet tracking-widest text-white">
+                            {cls.code}
                           </span>
-                        </div>
-                        <div className="font-medium text-sm leading-tight mb-1">{nextExam.title}</div>
-                        {nextExam.status === "live" ? (
-                          <div className="flex items-center gap-1 text-muted-foreground mb-2">
-                            <Clock className="w-3 h-3 shrink-0" />
-                            <span className="text-xs">Closes in</span>
-                            <Countdown to={nextExam.end_time} />
+                          <span className="font-display font-bold text-base leading-tight group-hover:underline">
+                            {cls.name}
+                          </span>
+                        </Link>
+                      </td>
+
+                      <td className="px-5 py-4 min-w-[200px]">
+                        {nextExam ? (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                              <span className={`px-2 py-0.5 rounded-full border border-ink text-[10px] font-mono uppercase tracking-widest ${STATUS_COLORS[nextExam.status] ?? "bg-card"}`}>
+                                {nextExam.status}
+                              </span>
+                              <span className="font-display font-bold text-sm leading-tight">{nextExam.title}</span>
+                            </div>
+                            {nextExam.status === "live" ? (
+                              <div className="flex items-center gap-1 text-pink font-semibold">
+                                <Clock className="w-3 h-3 shrink-0" />
+                                <span className="text-xs">Closes in</span>
+                                <Countdown to={nextExam.end_time} />
+                              </div>
+                            ) : nextExam.status === "upcoming" ? (
+                              <div className="flex items-center gap-1 text-ink/70">
+                                <Clock className="w-3 h-3 shrink-0" />
+                                <span className="text-xs">Starts in</span>
+                                <Countdown to={nextExam.start_time} />
+                              </div>
+                            ) : null}
                           </div>
-                        ) : nextExam.status === "upcoming" ? (
-                          <div className="flex items-center gap-1 text-muted-foreground mb-2">
-                            <Clock className="w-3 h-3 shrink-0" />
-                            <span className="text-xs">Starts in</span>
-                            <Countdown to={nextExam.start_time} />
+                        ) : (
+                          <span className="text-sm text-ink/50">No exam scheduled</span>
+                        )}
+                      </td>
+
+                      <td className="px-5 py-4 min-w-[200px]">
+                        {activeAssignments.length > 0 ? (
+                          <div className="space-y-3">
+                            {activeAssignments.slice(0, 2).map((a: any) => (
+                              <div key={a.id}>
+                                <div className="text-sm font-semibold leading-tight mb-1 truncate">{a.title}</div>
+                                <AssignmentBar submitted={a.submittedCount} total={a.enrolledCount} />
+                                <div className="flex items-center gap-1 mt-1 text-ink/70">
+                                  <Clock className="w-3 h-3 shrink-0" />
+                                  <span className="text-xs">Due in</span>
+                                  <Countdown to={a.end_at} />
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                        ) : null}
-                        <div className="flex gap-2">
-                          <WakeoutButton asChild size="sm" variant="sky">
-                            <Link to="/lecturer/exams/$examId/results" params={{ examId: nextExam.id }}>
-                              Results
-                            </Link>
-                          </WakeoutButton>
-                          {nextExam.status === "live" && (
+                        ) : (
+                          <span className="text-sm text-ink/50">No active assignments</span>
+                        )}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span className="inline-flex items-center justify-center min-w-[34px] px-2.5 py-0.5 rounded-full border-2 border-ink bg-sky font-mono text-xs font-bold">
+                          <Users className="w-3 h-3 mr-1" />
+                          {enrolled}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {nextExam && (
+                            <WakeoutButton asChild size="sm" variant="sky">
+                              <Link to="/lecturer/exams/$examId/results" params={{ examId: nextExam.id }}>
+                                Results
+                              </Link>
+                            </WakeoutButton>
+                          )}
+                          {nextExam?.status === "live" && (
                             <WakeoutButton asChild size="sm" variant="violet">
                               <Link to="/lecturer/exams/$examId/monitor" params={{ examId: nextExam.id }}>
                                 Monitor
                               </Link>
                             </WakeoutButton>
                           )}
+                          {!nextExam && (
+                            <WakeoutButton asChild size="sm" variant="secondary">
+                              <Link to="/lecturer/classes/$classId" params={{ classId: cls.id }}>
+                                Open
+                              </Link>
+                            </WakeoutButton>
+                          )}
                         </div>
-                      </div>
-                    ) : (
-                      <div className="text-xs text-muted-foreground">No exam scheduled</div>
-                    )}
-                  </div>
-
-                  {/* Active assignments */}
-                  <div>
-                    <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-1.5 flex items-center gap-1">
-                      <FileText className="w-3 h-3" /> Assignments
-                    </div>
-                    {activeAssignments.length > 0 ? (
-                      <div className="space-y-2.5">
-                        {activeAssignments.slice(0, 2).map((a: any) => (
-                          <div key={a.id}>
-                            <div className="text-sm font-medium leading-tight mb-1 truncate">{a.title}</div>
-                            <AssignmentBar submitted={a.submittedCount} total={a.enrolledCount} />
-                            <div className="flex items-center gap-1 mt-0.5 text-muted-foreground">
-                              <Clock className="w-3 h-3 shrink-0" />
-                              <span className="text-xs">Due in</span>
-                              <Countdown to={a.end_at} />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-muted-foreground">No active assignments</div>
-                    )}
-                  </div>
-                </div>
-              </Card>
-            ))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </Section>

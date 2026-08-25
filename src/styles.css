@@ -40,6 +40,7 @@
   --color-ring-offset-background: var(--background);
 
   /* Brand */
+  --color-ink: var(--ink);
   --color-lime: var(--lime);
   --color-lime-foreground: var(--lime-foreground);
   --color-pink: var(--pink);
