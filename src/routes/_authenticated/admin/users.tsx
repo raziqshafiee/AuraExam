@@ -126,7 +126,7 @@ function UsersPage() {
                 </td>
                 <td>
                   <span className={`px-2 py-0.5 rounded-full border-2 border-ink text-xs font-mono ${
-                    u.status === "active" ? "bg-lime" : u.status === "pending" ? "bg-amber" : "bg-pink"
+                    u.status === "active" ? "bg-lime" : "bg-pink"
                   }`}>
                     {u.status}
                   </span>

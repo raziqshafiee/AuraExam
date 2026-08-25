@@ -10,7 +10,7 @@ export type AdminUser = {
   name: string;
   email: string;
   role: "student" | "lecturer" | "admin";
-  status: "active" | "banned" | "pending";
+  status: "active" | "banned";
   joined: string;
 };
 

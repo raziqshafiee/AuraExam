@@ -46,7 +46,7 @@ function RegisterPage() {
         <div className="max-w-md mx-auto px-6 py-20">
           <span className="inline-block px-4 py-1.5 rounded-full border-2 border-ink bg-pink font-mono text-xs uppercase tracking-widest shadow-brut-sm">Join us</span>
           <h1 className="mt-4 font-display font-extrabold text-5xl tracking-tight">Create account.</h1>
-          <p className="mt-3 text-muted-foreground">Lecturer accounts require admin approval before they can sign in.</p>
+          <p className="mt-3 text-muted-foreground">We'll email you a verification link — confirm it to sign in.</p>
           <form onSubmit={submit} className="mt-8 rounded-3xl border-2 border-ink bg-card p-6 shadow-brut space-y-4">
             <div>
               <label className="text-xs font-mono uppercase tracking-widest">Full name</label>
