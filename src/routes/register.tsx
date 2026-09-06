@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { MarketingLayout } from "@/components/brand/marketing-layout";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
+import { FullPageLoader } from "@/components/brand/full-page-loader";
 import { signUp, ROLE_HOME, type Role } from "@/lib/auth";
 import { toast } from "sonner";
 
@@ -22,6 +23,10 @@ function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  // Covers the gap between navigate() firing and the destination dashboard's
+  // own (multi-query) loader finishing, so the form doesn't just sit there
+  // looking stalled while that resolves.
+  const [redirecting, setRedirecting] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,6 +36,7 @@ function RegisterPage() {
       if (needsVerification) {
         navigate({ to: "/verify-email", search: { email } });
       } else {
+        setRedirecting(true);
         navigate({ to: ROLE_HOME[confirmedRole] });
       }
     } catch (error: any) {
@@ -39,6 +45,10 @@ function RegisterPage() {
       setIsLoading(false);
     }
   };
+
+  if (redirecting) {
+    return <FullPageLoader message="Setting up your account…" />;
+  }
 
   return (
     <MarketingLayout>

@@ -23,6 +23,14 @@ export function bustAuthCache() {
   _authCache = null;
 }
 
+// Exported so a fresh sign-in can seed the cache with a result it already
+// knows (auth + ban status were just verified as part of signIn()) — avoids
+// re-doing that round trip a moment later in beforeLoad on the first
+// post-login navigation.
+export function primeAuthCache(user: Awaited<ReturnType<typeof getAuthUser>>) {
+  _authCache = { user, banned: false, ts: Date.now() };
+}
+
 // Only re-fetch all loaders if the user was away for more than 2 minutes.
 const INVALIDATE_AFTER_MS = 2 * 60 * 1000;
 

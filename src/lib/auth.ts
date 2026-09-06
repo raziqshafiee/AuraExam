@@ -93,16 +93,23 @@ export async function signIn(email: string, password: string): Promise<AuthUser>
     throw new Error("Your account has been suspended. Please contact your institution.");
   }
 
-  // Create a profiles row for legacy accounts that pre-date Supabase migration
   const mapped = mapUser(data.user);
-  const { createUserProfile } = await import("./supabase/admin");
-  await createUserProfile({
-    data: {
-      id: mapped.id,
-      name: mapped.name || email.split("@")[0],
-      role: mapped.role,
-    },
-  }).catch(() => {/* profile already exists — ignore */});
+
+  // Backfill a profiles row for legacy accounts that pre-date the Supabase
+  // migration. The ban-status query above already tells us whether the row
+  // exists (`profile` is null when it doesn't), so skip this extra
+  // server round trip on every normal login — it's only needed once, ever,
+  // per legacy account.
+  if (!profile) {
+    const { createUserProfile } = await import("./supabase/admin");
+    await createUserProfile({
+      data: {
+        id: mapped.id,
+        name: mapped.name || email.split("@")[0],
+        role: mapped.role,
+      },
+    }).catch(() => {/* profile already exists — ignore */});
+  }
 
   return mapped;
 }

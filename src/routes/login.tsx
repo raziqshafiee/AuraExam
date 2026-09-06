@@ -2,7 +2,9 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { MarketingLayout } from "@/components/brand/marketing-layout";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
+import { FullPageLoader } from "@/components/brand/full-page-loader";
 import { signIn, useAuthUser, ROLE_HOME, type Role } from "@/lib/auth";
+import { primeAuthCache } from "./_authenticated";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
@@ -21,12 +23,17 @@ function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  // Covers the gap between navigate() firing and the destination dashboard's
+  // own (multi-query) loader finishing, so the login form doesn't just sit
+  // there looking stalled while that resolves.
+  const [redirecting, setRedirecting] = useState(false);
 
   // If a session already exists (e.g. user navigated back here while signed
   // in), skip the form and go straight in. Email-confirmation links land on
   // /auth/confirm, not here — that route handles the confirmed-email notice.
   useEffect(() => {
     if (user) {
+      setRedirecting(true);
       navigate({ to: ROLE_HOME[user.role] });
     }
   }, [user, navigate]);
@@ -36,7 +43,9 @@ function LoginPage() {
     setIsLoading(true);
     try {
       const user = await signIn(email, password);
+      primeAuthCache(user);
       toast.success(`Welcome back, ${user.name}!`);
+      setRedirecting(true);
       navigate({ to: ROLE_HOME[user.role] });
     } catch (error: any) {
       if (error.name === "EmailNotConfirmedError") {
@@ -49,6 +58,10 @@ function LoginPage() {
       setIsLoading(false);
     }
   };
+
+  if (redirecting) {
+    return <FullPageLoader message="Signing you in…" />;
+  }
 
   return (
     <MarketingLayout>
