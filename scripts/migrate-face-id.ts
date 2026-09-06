@@ -56,6 +56,7 @@ async function migrate() {
     ALTER TABLE submissions ADD COLUMN IF NOT EXISTS check_in_score NUMERIC;
     ALTER TABLE submissions ADD COLUMN IF NOT EXISTS checkin_attempts INT NOT NULL DEFAULT 0;
     ALTER TABLE submissions ADD COLUMN IF NOT EXISTS checked_in_at TIMESTAMPTZ;
+    ALTER TABLE submissions ADD COLUMN IF NOT EXISTS checkin_rejection_reason TEXT;
     ALTER TABLE submissions ADD COLUMN IF NOT EXISTS trust_score INT;
   `);
   console.log("✓  submissions check-in/trust-score columns added");

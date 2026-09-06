@@ -114,9 +114,7 @@ export function FaceIdCheckin({ examId, onPassed }: Props) {
         );
       } else {
         setState("retry");
-        setMessage(
-          `Match too low (${Math.round(result.score * 100)}%). ${result.attemptsRemaining} attempt(s) left.`,
-        );
+        setMessage(`Face didn't match. ${result.attemptsRemaining} attempt(s) left.`);
       }
     } catch (err: any) {
       setState("retry");

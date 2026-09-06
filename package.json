@@ -38,6 +38,8 @@
     "migrate:face-id": "tsx scripts/migrate-face-id.ts",
     "migrate:face-id-rls": "tsx scripts/migrate-face-id-rls.ts",
     "migrate:face-id-status-check": "tsx scripts/migrate-face-id-status-check.ts",
+    "migrate:audit-category": "tsx scripts/migrate-audit-category.ts",
+    "migrate:checkin-rejection-reason": "tsx scripts/migrate-checkin-rejection-reason.ts",
     "migrate:class-archive": "tsx scripts/migrate-class-archive.ts",
     "migrate:lecturer-no-approval": "tsx scripts/migrate-lecturer-no-approval.ts"
   },

@@ -202,7 +202,7 @@ create table if not exists audit_log (
   action      text not null,
   target      text not null,
   category    text not null default 'general'
-                check (category in ('user_management','exam','integrity','appeal','class','general')),
+                check (category in ('user_management','exam','integrity','appeal','class','general','identity')),
   created_at  timestamptz not null default now()
 );
 

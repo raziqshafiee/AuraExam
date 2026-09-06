@@ -48,7 +48,7 @@ async function migrate() {
       submitted_at, created_at, auto_score, started_at, last_seen_at
     ) ON submissions TO authenticated, anon;
   `);
-  console.log("✓  checkin_status/check_in_score/checkin_attempts/checked_in_at/trust_score");
+  console.log("✓  checkin_status/check_in_score/checkin_attempts/checked_in_at/trust_score/checkin_rejection_reason");
   console.log("   are no longer UPDATE-able by authenticated or anon");
 
   console.log("\nMigration complete.");

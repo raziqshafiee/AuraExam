@@ -17,7 +17,10 @@ export const AUTOSAVE = {
 } as const;
 
 export const FACE_ID = {
-  MATCH_THRESHOLD: 0.8,
+  // Lowered to 0.70 by owner decision (was 0.80, and before that a design doc
+  // specified 0.85). Shared by both verifyEnrolment (registration) and
+  // checkInExam (exam check-in) so this single value governs both.
+  MATCH_THRESHOLD: 0.7,
   MAX_ENROLL_ATTEMPTS: 3,
   MAX_CHECKIN_ATTEMPTS: 3,
   COOLDOWN_DAYS: 90,

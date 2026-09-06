@@ -81,9 +81,7 @@ export function FaceIdEnroll({ passportEmbedding, onDone }: Props) {
         onDone("PENDING_REVIEW");
       } else {
         setState("retry");
-        setMessage(
-          `Match too low (${Math.round(result.score * 100)}%). ${result.attemptsRemaining} attempt(s) left.`,
-        );
+        setMessage(`Face didn't match. ${result.attemptsRemaining} attempt(s) left.`);
       }
     } catch (err: any) {
       setState("retry");

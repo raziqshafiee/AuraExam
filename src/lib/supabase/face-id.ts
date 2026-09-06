@@ -518,7 +518,7 @@ export const checkInExam = createServerFn({ method: "POST" })
 
     const existing = await db(supabase)
       .from("submissions")
-      .select("id, checkin_status, checkin_attempts")
+      .select("id, checkin_status, checkin_attempts, checkin_rejection_reason")
       .eq("exam_id", data.examId)
       .eq("student_id", user.id)
       .maybeSingle();
@@ -533,17 +533,51 @@ export const checkInExam = createServerFn({ method: "POST" })
         };
       }
 
-      // A rejected check-in gets a fresh attempt cycle rather than a
-      // permanent block — treated exactly like a first attempt (attempts
-      // reset to 0). If this new cycle doesn't resolve immediately (pass or
-      // exhaust), the "retry" branch below explicitly flips checkin_status
-      // away from "rejected" back to "pending" so later calls correctly
-      // keep counting up from here instead of re-detecting "rejected" and
-      // resetting to 0 forever.
-      const isRetryAfterRejection = sub.checkin_status === "rejected";
-      const attemptsSoFar = isRetryAfterRejection ? 0 : (sub.checkin_attempts ?? 0);
+      // A rejected check-in no longer dead-ends the attempt — the student gets
+      // a fresh round of biometric attempts, exactly like a first check-in.
+      // If those run out again it goes back to manual review, where the
+      // lecturer/admin can clear or reject it again.
+      if (sub.checkin_status === "rejected") {
+        const score = cosineSimilarity(profile.baseline_embedding as number[], data.embedding);
 
-      if (!isRetryAfterRejection && attemptsSoFar >= FACE_ID.MAX_CHECKIN_ATTEMPTS) {
+        if (score >= FACE_ID.MATCH_THRESHOLD) {
+          await admin
+            .from("submissions")
+            .update({
+              checkin_status: "verified",
+              check_in_score: score,
+              checkin_attempts: 1,
+              checkin_rejection_reason: null,
+              checked_in_at: new Date().toISOString(),
+            })
+            .eq("id", sub.id);
+          return {
+            outcome: "verified" as const,
+            submissionId: sub.id,
+            token: await mintToken(sub.id),
+          };
+        }
+
+        await admin
+          .from("submissions")
+          .update({
+            checkin_status: "pending",
+            check_in_score: score,
+            checkin_attempts: 1,
+            checkin_rejection_reason: null,
+          })
+          .eq("id", sub.id);
+        return {
+          outcome: "retry" as const,
+          submissionId: sub.id,
+          score,
+          attemptsRemaining: FACE_ID.MAX_CHECKIN_ATTEMPTS - 1,
+        };
+      }
+
+      const attemptsSoFar = sub.checkin_attempts ?? 0;
+
+      if (attemptsSoFar >= FACE_ID.MAX_CHECKIN_ATTEMPTS) {
         return { outcome: "checkin-pending-review" as const, submissionId: sub.id };
       }
 
@@ -715,6 +749,7 @@ export const reviewCheckin = createServerFn({ method: "POST" })
       .from("submissions")
       .update({
         checkin_status: data.action === "clear" ? "verified" : "rejected",
+        checkin_rejection_reason: data.action === "reject" ? (data.reason ?? null) : null,
         ...(data.action === "clear" ? { checked_in_at: new Date().toISOString() } : {}),
       })
       .eq("id", data.submissionId);
