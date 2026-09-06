@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   CheckCircle,
   ShieldAlert,
+  ShieldCheck,
   Loader2,
   Wifi,
   WifiOff,
@@ -58,6 +59,12 @@ const STATUS_PRIORITY: Record<string, number> = {
   submitted: 2,
   graded: 3,
 };
+
+function trustScoreTone(score: number): { label: string; cls: string } {
+  if (score >= 90) return { label: "High trust", cls: "bg-lime text-ink" };
+  if (score >= 70) return { label: "Medium trust", cls: "bg-amber text-ink" };
+  return { label: "Low trust", cls: "bg-pink text-white" };
+}
 
 function useNow(intervalMs = 10_000) {
   const [now, setNow] = useState(() => new Date());
@@ -328,6 +335,20 @@ function Monitor() {
                           pending essay
                         </span>
                       )}
+                    </div>
+                  )}
+
+                  {/* Trust score — server-computed at submit from flag_reasons weights */}
+                  {s.trustScore !== null && s.trustScore !== undefined && (
+                    <div className="border-t-2 border-ink/10 pt-2.5 flex items-center justify-between">
+                      <span className="text-[10px] font-mono text-muted-foreground flex items-center gap-1">
+                        <ShieldCheck className="w-3 h-3" /> Trust score
+                      </span>
+                      <span
+                        className={`text-xs font-mono font-bold px-2 py-0.5 rounded-full border border-ink/20 ${trustScoreTone(s.trustScore).cls}`}
+                      >
+                        {s.trustScore}/100 · {trustScoreTone(s.trustScore).label}
+                      </span>
                     </div>
                   )}
 

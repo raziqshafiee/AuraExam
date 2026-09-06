@@ -1,9 +1,11 @@
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
+import { flushSync } from "react-dom";
 import { PageHeader, Card } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
 import { CameraProctor } from "@/components/brand/camera-proctor";
 import { FaceIdCheckin } from "@/components/brand/face-id-checkin";
+import { FullPageLoader } from "@/components/brand/full-page-loader";
 import { getStudentExamLobby, startExam } from "@/lib/supabase/exams";
 import { fmtMY } from "@/lib/datetime";
 import {
@@ -14,6 +16,7 @@ import {
   VideoOff,
   RefreshCw,
   Camera,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -41,6 +44,7 @@ function Lobby() {
   const navigate = useNavigate();
   const [agreed, setAgreed] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [entering, setEntering] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [checkinToken, setCheckinToken] = useState<string | null>(null);
 
@@ -117,7 +121,8 @@ function Lobby() {
     exam.existingSubmission &&
     existingStatus !== "in-progress" &&
     existingStatus !== "retake-approved" &&
-    existingStatus !== "checkin-pending"
+    existingStatus !== "checkin-pending" &&
+    existingStatus !== "checkin-rejected"
   ) {
     return (
       <>
@@ -151,6 +156,11 @@ function Lobby() {
       return;
     }
     setStarting(true);
+    // Paint the cover synchronously before doing anything else, so the lobby's
+    // camera/Face ID cards disappear the instant "Start exam" is clicked
+    // instead of staying visible through the fullscreen + startExam + take-page
+    // loader round trip that follows.
+    flushSync(() => setEntering(true));
     try {
       // Await fullscreen before navigating so the take page always mounts with
       // fullscreenElement already set. If we don't await, the take page can mount
@@ -179,11 +189,13 @@ function Lobby() {
     } catch (err: any) {
       toast.error(err?.message ?? "Failed to start exam");
       setStarting(false);
+      setEntering(false);
     }
   }
 
   return (
     <>
+      {entering && <FullPageLoader message="Starting exam…" />}
       <PageHeader
         badge={exam.classCode}
         badgeColor={existingStatus === "retake-approved" ? "bg-amber" : "bg-sky"}
@@ -204,6 +216,23 @@ function Lobby() {
               <p className="text-sm text-muted-foreground mt-1">
                 Your previous attempt has been cleared. This is a fresh attempt — your answers,
                 flags, and score have been reset. Complete the checks below and start when ready.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {existingStatus === "checkin-rejected" && (
+        <Card className="mb-6 border-pink bg-pink/10">
+          <div className="flex items-start gap-3">
+            <XCircle className="w-5 h-5 text-pink shrink-0 mt-0.5" />
+            <div>
+              <div className="font-display font-bold">Your previous check-in was rejected</div>
+              <p className="text-sm text-muted-foreground mt-1">
+                {exam.existingSubmission?.checkinRejectionReason
+                  ? `Reason: ${exam.existingSubmission.checkinRejectionReason}. `
+                  : ""}
+                You can try Face ID check-in again below.
               </p>
             </div>
           </div>

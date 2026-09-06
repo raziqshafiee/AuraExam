@@ -896,7 +896,7 @@ export const getLecturerExamMonitor = createServerFn({ method: "GET" })
       db(supabase)
         .from("submissions")
         .select(
-          "id, status, flags, score, auto_score, total, submitted_at, last_seen_at, profiles!student_id(name, id)",
+          "id, status, flags, score, auto_score, total, submitted_at, last_seen_at, trust_score, profiles!student_id(name, id)",
         )
         .eq("exam_id", examId),
       db(supabase)
@@ -954,6 +954,7 @@ export const getLecturerExamMonitor = createServerFn({ method: "GET" })
         total: s.total ?? 0,
         submittedAt: s.submitted_at,
         lastSeenAt: s.last_seen_at ?? null,
+        trustScore: s.trust_score ?? null,
         flagReasons: flagsBySubmission[s.id] ?? [],
       })),
       notStarted,
@@ -1059,7 +1060,7 @@ export const getStudentExamLobby = createServerFn({ method: "GET" })
 
     const { data: sub } = await db(supabase)
       .from("submissions")
-      .select("id, status")
+      .select("id, status, checkin_status, checkin_rejection_reason")
       .eq("exam_id", examId)
       .eq("student_id", user.id)
       .maybeSingle();
@@ -1080,7 +1081,20 @@ export const getStudentExamLobby = createServerFn({ method: "GET" })
       status: exam.status as ExamStatus,
       require_camera: exam.require_camera ?? false,
       require_identity_verification: exam.require_identity_verification ?? false,
-      existingSubmission: sub ? { id: sub.id, status: sub.status } : null,
+      existingSubmission: sub
+        ? {
+            id: sub.id,
+            // A rejected check-in is still retryable — the underlying row
+            // stays 'checkin-pending' (status) with checkin_status='rejected'.
+            // The lobby surfaces this as a banner and lets the student run
+            // Face ID check-in again rather than dead-ending the attempt.
+            status:
+              sub.status === "checkin-pending" && sub.checkin_status === "rejected"
+                ? "checkin-rejected"
+                : sub.status,
+            checkinRejectionReason: sub.checkin_rejection_reason ?? null,
+          }
+        : null,
     };
   });
 
