@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   Lightbulb,
   ScanFace,
+  LifeBuoy,
   type LucideIcon,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -74,16 +75,20 @@ const PRIMARY_NAV: Record<Role, NavItem[]> = {
   ],
 };
 
-// Pinned below primary nav, above logout. Admin has no notifications/profile routes.
+// Pinned below primary nav, above logout. Admin has no notifications/profile routes,
+// only Help.
 const UTILITY_NAV: Partial<Record<Role, NavItem[]>> = {
   student: [
     { to: "/student/notifications", label: "Inbox", icon: Bell, badge: "inbox" },
     { to: "/student/profile", label: "Profile", icon: User },
+    { to: "/student/help", label: "Help", icon: LifeBuoy },
   ],
   lecturer: [
     { to: "/lecturer/notifications", label: "Inbox", icon: Bell, badge: "inbox" },
     { to: "/lecturer/profile", label: "Profile", icon: User },
+    { to: "/lecturer/help", label: "Help", icon: LifeBuoy },
   ],
+  admin: [{ to: "/admin/help", label: "Help", icon: LifeBuoy }],
 };
 
 const ROLE_BG: Record<Role, string> = {
@@ -243,6 +248,7 @@ const SEGMENT_LABEL: Record<string, string> = {
   appeals: "Appeals",
   notifications: "Inbox",
   profile: "Profile",
+  help: "Help Center",
   users: "Users",
   "audit-log": "Audit Log",
   integrity: "Integrity",
