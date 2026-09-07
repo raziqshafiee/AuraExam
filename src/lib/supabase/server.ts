@@ -20,10 +20,19 @@ export const createClient = () => {
           }));
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            const cookie = serialize(name, value, options as any);
-            setResponseHeader("Set-Cookie", cookie);
-          });
+          // setResponseHeader replaces same-name headers when given a single
+          // string (Headers.set semantics) — looping and calling it once per
+          // cookie silently drops every cookie but the last one in the batch.
+          // Passing the whole batch as an array routes it through the
+          // delete-then-append path instead, which is what multiple
+          // simultaneous Set-Cookie headers (e.g. chunked session cookies)
+          // actually require.
+          const cookies = cookiesToSet.map(({ name, value, options }) =>
+            serialize(name, value, options as any)
+          );
+          if (cookies.length > 0) {
+            setResponseHeader("Set-Cookie", cookies);
+          }
         },
       },
     }
