@@ -18,6 +18,22 @@ async function migrate() {
   `);
 
   console.log("✓  submissions.reviewed_at / reviewed_by added");
+
+  // Backfill: appeals resolved before this column existed never marked their
+  // submission reviewed, so those flagged submissions are stuck on the
+  // "needs attention" queues forever even though a lecturer already decided
+  // them. appeals has no resolved-by column, so reviewed_by stays NULL here.
+  const { rowCount } = await pool.query(`
+    UPDATE submissions s
+    SET reviewed_at = a.decided_at
+    FROM appeals a
+    WHERE a.submission_id = s.id
+      AND a.status IN ('approved', 'rejected')
+      AND a.decided_at IS NOT NULL
+      AND s.reviewed_at IS NULL;
+  `);
+  console.log(`✓  backfilled reviewed_at for ${rowCount} submission(s) with an already-resolved appeal`);
+
   await pool.end();
 }
 
