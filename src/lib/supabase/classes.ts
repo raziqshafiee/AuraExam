@@ -135,6 +135,13 @@ export const createClass = createServerFn({ method: "POST" })
       .single();
 
     if (error) throw new Error(error.message);
+
+    await writeAudit(user.id, {
+      action: "Created class",
+      target: `${newClass.name} [${newClass.code}]`,
+      category: "class",
+    });
+
     return newClass;
   });
 
@@ -143,6 +150,12 @@ export const updateClass = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const supabase = createClient();
     const { user } = await requireRole("lecturer", supabase, "Unauthorized");
+
+    const { data: before } = await db(supabase)
+      .from("classes")
+      .select("name, code")
+      .eq("id", data.classId)
+      .single();
 
     const { data: updated, error } = await db(supabase)
       .from("classes")
@@ -153,6 +166,15 @@ export const updateClass = createServerFn({ method: "POST" })
       .single();
 
     if (error) throw new Error(error.message);
+
+    if (before && (before.name !== data.name || before.code !== data.code)) {
+      await writeAudit(user.id, {
+        action: "Renamed class",
+        target: `${before.name} [${before.code}] → ${data.name} [${data.code}]`,
+        category: "class",
+      });
+    }
+
     return updated;
   });
 
@@ -203,6 +225,12 @@ export const deleteEmptyClass = createServerFn({ method: "POST" })
       throw new Error("This class has enrolled students — archive it instead of deleting");
     }
 
+    const { data: cls } = await db(supabase)
+      .from("classes")
+      .select("name, code")
+      .eq("id", classId)
+      .single();
+
     const { error } = await db(supabase)
       .from("classes")
       .delete()
@@ -210,6 +238,13 @@ export const deleteEmptyClass = createServerFn({ method: "POST" })
       .eq("lecturer_id", user.id);
 
     if (error) throw new Error(error.message);
+
+    await writeAudit(user.id, {
+      action: "Deleted class",
+      target: cls ? `${cls.name} [${cls.code}]` : classId,
+      category: "class",
+    });
+
     return { success: true };
   });
 

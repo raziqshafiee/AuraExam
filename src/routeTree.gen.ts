@@ -34,6 +34,7 @@ import { Route as AuthenticatedLecturerFaceIdReviewRouteImport } from './routes/
 import { Route as AuthenticatedAdminUsersRouteImport } from './routes/_authenticated/admin/users'
 import { Route as AuthenticatedAdminSettingsRouteImport } from './routes/_authenticated/admin/settings'
 import { Route as AuthenticatedAdminIntegrityRouteImport } from './routes/_authenticated/admin/integrity'
+import { Route as AuthenticatedAdminInsightsRouteImport } from './routes/_authenticated/admin/insights'
 import { Route as AuthenticatedAdminHelpRouteImport } from './routes/_authenticated/admin/help'
 import { Route as AuthenticatedAdminFaceIdReviewRouteImport } from './routes/_authenticated/admin/face-id-review'
 import { Route as AuthenticatedAdminExamsRouteImport } from './routes/_authenticated/admin/exams'
@@ -197,6 +198,12 @@ const AuthenticatedAdminIntegrityRoute =
   AuthenticatedAdminIntegrityRouteImport.update({
     id: '/admin/integrity',
     path: '/admin/integrity',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedAdminInsightsRoute =
+  AuthenticatedAdminInsightsRouteImport.update({
+    id: '/admin/insights',
+    path: '/admin/insights',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedAdminHelpRoute = AuthenticatedAdminHelpRouteImport.update({
@@ -381,6 +388,7 @@ export interface FileRoutesByFullPath {
   '/admin/exams': typeof AuthenticatedAdminExamsRoute
   '/admin/face-id-review': typeof AuthenticatedAdminFaceIdReviewRoute
   '/admin/help': typeof AuthenticatedAdminHelpRoute
+  '/admin/insights': typeof AuthenticatedAdminInsightsRoute
   '/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
@@ -435,6 +443,7 @@ export interface FileRoutesByTo {
   '/admin/exams': typeof AuthenticatedAdminExamsRoute
   '/admin/face-id-review': typeof AuthenticatedAdminFaceIdReviewRoute
   '/admin/help': typeof AuthenticatedAdminHelpRoute
+  '/admin/insights': typeof AuthenticatedAdminInsightsRoute
   '/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/users': typeof AuthenticatedAdminUsersRoute
@@ -491,6 +500,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/exams': typeof AuthenticatedAdminExamsRoute
   '/_authenticated/admin/face-id-review': typeof AuthenticatedAdminFaceIdReviewRoute
   '/_authenticated/admin/help': typeof AuthenticatedAdminHelpRoute
+  '/_authenticated/admin/insights': typeof AuthenticatedAdminInsightsRoute
   '/_authenticated/admin/integrity': typeof AuthenticatedAdminIntegrityRoute
   '/_authenticated/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/_authenticated/admin/users': typeof AuthenticatedAdminUsersRoute
@@ -547,6 +557,7 @@ export interface FileRouteTypes {
     | '/admin/exams'
     | '/admin/face-id-review'
     | '/admin/help'
+    | '/admin/insights'
     | '/admin/integrity'
     | '/admin/settings'
     | '/admin/users'
@@ -601,6 +612,7 @@ export interface FileRouteTypes {
     | '/admin/exams'
     | '/admin/face-id-review'
     | '/admin/help'
+    | '/admin/insights'
     | '/admin/integrity'
     | '/admin/settings'
     | '/admin/users'
@@ -656,6 +668,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/exams'
     | '/_authenticated/admin/face-id-review'
     | '/_authenticated/admin/help'
+    | '/_authenticated/admin/insights'
     | '/_authenticated/admin/integrity'
     | '/_authenticated/admin/settings'
     | '/_authenticated/admin/users'
@@ -886,6 +899,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminIntegrityRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/admin/insights': {
+      id: '/_authenticated/admin/insights'
+      path: '/admin/insights'
+      fullPath: '/admin/insights'
+      preLoaderRoute: typeof AuthenticatedAdminInsightsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/admin/help': {
       id: '/_authenticated/admin/help'
       path: '/admin/help'
@@ -1091,6 +1111,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedAdminExamsRoute: typeof AuthenticatedAdminExamsRoute
   AuthenticatedAdminFaceIdReviewRoute: typeof AuthenticatedAdminFaceIdReviewRoute
   AuthenticatedAdminHelpRoute: typeof AuthenticatedAdminHelpRoute
+  AuthenticatedAdminInsightsRoute: typeof AuthenticatedAdminInsightsRoute
   AuthenticatedAdminIntegrityRoute: typeof AuthenticatedAdminIntegrityRoute
   AuthenticatedAdminSettingsRoute: typeof AuthenticatedAdminSettingsRoute
   AuthenticatedAdminUsersRoute: typeof AuthenticatedAdminUsersRoute
@@ -1137,6 +1158,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAdminExamsRoute: AuthenticatedAdminExamsRoute,
   AuthenticatedAdminFaceIdReviewRoute: AuthenticatedAdminFaceIdReviewRoute,
   AuthenticatedAdminHelpRoute: AuthenticatedAdminHelpRoute,
+  AuthenticatedAdminInsightsRoute: AuthenticatedAdminInsightsRoute,
   AuthenticatedAdminIntegrityRoute: AuthenticatedAdminIntegrityRoute,
   AuthenticatedAdminSettingsRoute: AuthenticatedAdminSettingsRoute,
   AuthenticatedAdminUsersRoute: AuthenticatedAdminUsersRoute,

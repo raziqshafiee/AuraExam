@@ -16,18 +16,21 @@ create table if not exists profiles (
 
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_name text := coalesce(new.raw_user_meta_data->>'name', split_part(new.email,'@',1));
+  v_role text := case when new.raw_user_meta_data->>'role' = 'lecturer' then 'lecturer' else 'student' end;
+  v_status text := case when v_role = 'lecturer' then 'pending' else 'active' end;
 begin
   -- Self-registration may only produce 'student' or 'lecturer'. 'admin' (and any
   -- other value) is never trusted from client-supplied raw_user_meta_data —
   -- admin accounts are granted exclusively via the seed:admin script.
   insert into public.profiles (id, name, role, status)
-  values (
-    new.id,
-    coalesce(new.raw_user_meta_data->>'name', split_part(new.email,'@',1)),
-    case when new.raw_user_meta_data->>'role' = 'lecturer' then 'lecturer' else 'student' end,
-    case when new.raw_user_meta_data->>'role' = 'lecturer' then 'pending' else 'active' end
-  )
+  values (new.id, v_name, v_role, v_status)
   on conflict (id) do nothing;
+
+  insert into public.audit_log (actor_id, action, target, category)
+  values (new.id, 'Registered account', v_name || ' (' || v_role || ')', 'user_management');
+
   return new;
 end;
 $$;

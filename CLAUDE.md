@@ -142,8 +142,8 @@ draft → upcoming (published) → live (start_time reached) → closed (end_tim
 Events logged:
 | Category | Events |
 |---|---|
-| `user_management` | admin bans/unbans a user |
-| `class` | admin deletes a class |
+| `user_management` | user registers (student/lecturer self-signup); admin bans/unbans a user |
+| `class` | lecturer creates/renames/deletes a class; admin deletes a class |
 | `exam` | lecturer publishes, unpublishes, deletes exam; all essays fully graded |
 | `integrity` | exam auto-submitted after 3 integrity flags |
 | `appeal` | lecturer approves or rejects an appeal |

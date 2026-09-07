@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
+import { createAdminClient } from "./admin-client";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase;
 
@@ -241,6 +242,11 @@ export const getAdminDashboardData = createServerFn({ method: "GET" })
 
     const { data: profile } = await db(supabase).from("profiles").select("name").eq("id", user.id).single();
 
+    // submissions/appeals have no admin SELECT RLS policy, so the cookie-scoped
+    // client only ever sees the admin's own rows (i.e. none) — go through the
+    // service-role client for those, same as users.ts/audit.ts.
+    const admin = createAdminClient();
+
     // Platform-wide counts — run in parallel
     const [
       { count: usersCount },
@@ -255,8 +261,8 @@ export const getAdminDashboardData = createServerFn({ method: "GET" })
       db(supabase).from("classes").select("*", { count: "exact", head: true }),
       db(supabase).from("exams").select("*", { count: "exact", head: true }),
       db(supabase).from("exams").select("*", { count: "exact", head: true }).eq("status", "live"),
-      db(supabase).from("appeals").select("*", { count: "exact", head: true }).eq("status", "pending"),
-      db(supabase).from("submissions").select("*", { count: "exact", head: true }).eq("status", "flagged"),
+      admin.from("appeals").select("*", { count: "exact", head: true }).eq("status", "pending"),
+      admin.from("submissions").select("*", { count: "exact", head: true }).eq("status", "flagged"),
       db(supabase).from("profiles").select("*", { count: "exact", head: true }).eq("status", "banned"),
     ]);
 
@@ -269,7 +275,7 @@ export const getAdminDashboardData = createServerFn({ method: "GET" })
     const liveExamIds = (liveExamsRaw ?? []).map((e: any) => e.id);
     let inProgressByExam: Record<string, number> = {};
     if (liveExamIds.length > 0) {
-      const { data: inProg } = await db(supabase)
+      const { data: inProg } = await admin
         .from("submissions")
         .select("exam_id")
         .in("exam_id", liveExamIds)
@@ -287,7 +293,7 @@ export const getAdminDashboardData = createServerFn({ method: "GET" })
     }));
 
     // 5 most recently auto-submitted flagged submissions
-    const { data: flaggedRaw } = await db(supabase)
+    const { data: flaggedRaw } = await admin
       .from("submissions")
       .select("id, flags, submitted_at, profiles!student_id(name), exams(title, classes(code))")
       .eq("status", "flagged")
