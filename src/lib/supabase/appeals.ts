@@ -453,6 +453,16 @@ export const resolveAppeal = createServerFn({ method: "POST" })
       if (subErr) throw new Error(subErr.message);
     }
 
+    // Resolving the appeal — approved or rejected — counts as the flagged/disputed
+    // submission having been reviewed, so it drops off the admin/lecturer "needs
+    // attention" queues even when the decision itself was a rejection.
+    if (appeal.submission_id) {
+      await db(supabase)
+        .from("submissions")
+        .update({ reviewed_at: new Date().toISOString(), reviewed_by: user.id })
+        .eq("id", appeal.submission_id);
+    }
+
     // Notify the student of the decision
     try {
       const studentId = appeal.student_id;

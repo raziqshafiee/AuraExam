@@ -100,6 +100,7 @@ EXAM_SESSION_SECRET=       # Server-only signing secret for exam check-in tokens
 #### Key invariants
 - `submissions.auto_score` = MCQ+TF points (immutable after submit); `submissions.score` = auto_score + graded essay points
 - `submissions.flags` increments on each hard integrity event; at 3 flags the exam is auto-submitted as `"flagged"`
+- `submissions.status` does NOT change back on its own once `"flagged"` — it stays `"flagged"` forever unless an integrity appeal is approved (→ `"retake-approved"`). `submissions.reviewed_at`/`reviewed_by` track whether someone has looked at it: set automatically when any appeal on that submission is resolved (approved or rejected — see `resolveAppeal` in `appeals.ts`), or manually via `dismissFlag` (admin, `admin/integrity.tsx`) for flags with no appeal filed. Admin/lecturer dashboard "flagged submissions" counts filter on `reviewed_at IS NULL`; Insights' flag-rate/trend stats intentionally do NOT (they're a historical metric, not a queue).
 - Essays have `score: null` until a lecturer grades them; the submission is promoted to `"graded"` only when ALL essays have a score
 - `submissions.started_at` is set on first answer save; `submissions.last_seen_at` is updated by heartbeat pings every 30s
 - `audit_log.category` must be one of: `user_management`, `exam`, `integrity`, `appeal`, `class`, `general`
@@ -145,7 +146,7 @@ Events logged:
 | `user_management` | user registers (student/lecturer self-signup); admin bans/unbans a user |
 | `class` | lecturer creates/renames/deletes a class; admin deletes a class |
 | `exam` | lecturer publishes, unpublishes, deletes exam; all essays fully graded |
-| `integrity` | exam auto-submitted after 3 integrity flags |
+| `integrity` | exam auto-submitted after 3 integrity flags; admin dismisses a flag with no appeal filed |
 | `appeal` | lecturer approves or rejects an appeal |
 
 ### Components

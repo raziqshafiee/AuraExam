@@ -112,6 +112,8 @@ create table if not exists submissions (
   last_seen_at    timestamptz,
   submitted_at    timestamptz,
   created_at      timestamptz not null default now(),
+  reviewed_at     timestamptz,
+  reviewed_by     uuid references profiles(id) on delete set null,
   unique (exam_id, student_id)
 );
 

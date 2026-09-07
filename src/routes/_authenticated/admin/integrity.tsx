@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, Fragment, useEffect } from "react";
 import { PageHeader } from "@/components/brand/page";
 import { WakeoutButton } from "@/components/brand/wakeout-button";
-import { getAdminIntegrityLog } from "@/lib/supabase/admin";
+import { getAdminIntegrityLog, dismissFlag } from "@/lib/supabase/admin";
 import { fmtMY } from "@/lib/datetime";
 import { INTEGRITY } from "@/lib/constants";
 import {
@@ -103,6 +103,22 @@ function IntegrityPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [dismissingId, setDismissingId] = useState<string | null>(null);
+
+  async function handleDismiss(id: string) {
+    setDismissingId(id);
+    try {
+      await dismissFlag({ data: id });
+      setRecords((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, reviewedAt: new Date().toISOString(), reviewerName: "You" } : r))
+      );
+      toast.success("Flag dismissed");
+    } catch (err: any) {
+      toast.error(err?.message ?? "Failed to dismiss flag");
+    } finally {
+      setDismissingId(null);
+    }
+  }
 
   const visible = records.filter((r) => {
     const q = search.toLowerCase();
@@ -133,10 +149,10 @@ function IntegrityPage() {
   return (
     <>
       <PageHeader
-        badge="Observe only"
+        badge="Review"
         badgeColor="bg-secondary"
         title="Integrity log"
-        subtitle={`${totalCount} submission${totalCount !== 1 ? "s" : ""} with integrity events`}
+        subtitle={`${totalCount} submission${totalCount !== 1 ? "s" : ""} with integrity events. Auto-submitted flags stay on the dashboard's action items until reviewed — via an appeal decision or the Dismiss button here.`}
       />
 
       <div className="flex gap-3 flex-wrap items-center mb-4">
@@ -176,15 +192,16 @@ function IntegrityPage() {
       ) : (
         <div className="rounded-3xl border-2 border-ink bg-card shadow-brut overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm" style={{ minWidth: "900px" }}>
+            <table className="w-full text-sm" style={{ minWidth: "1020px" }}>
               <colgroup>
-                <col style={{ width: "18%" }} />
-                <col style={{ width: "18%" }} />
-                <col style={{ width: "9%" }} />
                 <col style={{ width: "16%" }} />
+                <col style={{ width: "16%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "11%" }} />
+                <col style={{ width: "15%" }} />
                 <col style={{ width: "9%" }} />
-                <col style={{ width: "14%" }} />
-                <col style={{ width: "12%" }} />
                 <col style={{ width: "4%" }} />
               </colgroup>
               <thead>
@@ -195,6 +212,7 @@ function IntegrityPage() {
                   <th className="px-5 py-4">Lecturer</th>
                   <th className="px-5 py-4">Flags</th>
                   <th className="px-5 py-4">Status</th>
+                  <th className="px-5 py-4">Review</th>
                   <th className="px-5 py-4">Time</th>
                   <th className="px-5 py-4" />
                 </tr>
@@ -220,6 +238,26 @@ function IntegrityPage() {
                             {isAutoSubmitted ? "Auto-submitted" : r.status}
                           </span>
                         </td>
+                        <td className="px-5 py-4 whitespace-nowrap">
+                          {r.reviewedAt ? (
+                            <span
+                              className="text-xs font-mono text-muted-foreground"
+                              title={`Reviewed ${fmtMY(r.reviewedAt, { dateStyle: "short", timeStyle: "short" })}${r.reviewerName ? ` by ${r.reviewerName}` : ""}`}
+                            >
+                              ✓ Reviewed
+                            </span>
+                          ) : isAutoSubmitted ? (
+                            <button
+                              onClick={() => handleDismiss(r.id)}
+                              disabled={dismissingId === r.id}
+                              className="text-xs font-mono font-semibold px-3 py-1 rounded-full border-2 border-ink bg-card hover:bg-secondary disabled:opacity-50"
+                            >
+                              {dismissingId === r.id ? "…" : "Dismiss"}
+                            </button>
+                          ) : (
+                            <span className="text-xs font-mono text-muted-foreground">—</span>
+                          )}
+                        </td>
                         <td className="px-5 py-4 text-xs font-mono text-muted-foreground whitespace-nowrap">
                           {r.submittedAt
                             ? fmtMY(r.submittedAt, { dateStyle: "short", timeStyle: "short" })
@@ -239,7 +277,7 @@ function IntegrityPage() {
                       </tr>
                       {isOpen && (
                         <tr key={`${r.id}-detail`}>
-                          <td colSpan={8} className="px-5 pb-5 pt-3 bg-secondary/50">
+                          <td colSpan={9} className="px-5 pb-5 pt-3 bg-secondary/50">
                             <FlagDetails flagReasons={r.flagReasons} />
                           </td>
                         </tr>

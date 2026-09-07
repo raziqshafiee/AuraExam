@@ -29,6 +29,7 @@
     "clear:appeals": "tsx scripts/clear-appeals.ts",
     "migrate:submission-rls": "tsx scripts/migrate-submission-rls.ts",
     "migrate:submission-started-at": "tsx scripts/migrate-submission-started-at.ts",
+    "migrate:submission-review": "tsx scripts/migrate-submission-review.ts",
     "migrate:proctoring": "tsx scripts/migrate-proctoring.ts",
     "migrate:exam-lifecycle": "tsx scripts/migrate-exam-lifecycle.ts",
     "migrate:notifications": "tsx scripts/migrate-notifications.ts",

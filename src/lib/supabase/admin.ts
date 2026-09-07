@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "./server";
 import { requireRole } from "./authz";
 import { createAdminClient } from "./admin-client";
+import { writeAudit } from "./audit";
 
 const db = (supabase: ReturnType<typeof createClient>) => supabase;
 const dbAdmin = (client: ReturnType<typeof createAdminClient>) => client;
@@ -23,7 +24,7 @@ export const getAdminIntegrityLog = createServerFn({ method: "GET" })
     let query = dbAdmin(admin)
       .from("submissions")
       .select(
-        "id, flags, status, submitted_at, profiles!student_id(name), exams(title, classes(code, profiles!lecturer_id(name)))",
+        "id, flags, status, submitted_at, reviewed_at, profiles!student_id(name), reviewer:profiles!reviewed_by(name), exams(title, classes(code, profiles!lecturer_id(name)))",
         { count: "exact" }
       )
       .gt("flags", 0)
@@ -59,6 +60,8 @@ export const getAdminIntegrityLog = createServerFn({ method: "GET" })
       flags: r.flags as number,
       status: r.status as string,
       submittedAt: r.submitted_at as string | null,
+      reviewedAt: r.reviewed_at as string | null,
+      reviewerName: r.reviewer?.name ?? null,
       flagReasons: flagsBySubmission[r.id] ?? [],
     }));
 
@@ -69,6 +72,41 @@ export const getAdminIntegrityLog = createServerFn({ method: "GET" })
       pageSize: PAGE_SIZE,
       totalPages: Math.ceil((count ?? 0) / PAGE_SIZE),
     };
+  });
+
+// Manually clear a flagged submission from the "needs attention" queues when no
+// appeal was ever filed for it (an appeal resolution already marks it reviewed —
+// see resolveAppeal). Does not change submission.status: the flag stays on the
+// record as history, only reviewed_at/reviewed_by change.
+export const dismissFlag = createServerFn({ method: "POST" })
+  .inputValidator((submissionId: string) => submissionId)
+  .handler(async ({ data: submissionId }) => {
+    const supabase = createClient();
+    const { user } = await requireRole("admin", supabase);
+
+    const admin = createAdminClient();
+    const { data: sub } = await dbAdmin(admin)
+      .from("submissions")
+      .select("status, profiles!student_id(name), exams(title)")
+      .eq("id", submissionId)
+      .single();
+
+    if (!sub) throw new Error("Submission not found");
+    if (sub.status !== "flagged") throw new Error("Only auto-submitted (flagged) submissions can be dismissed");
+
+    const { error } = await dbAdmin(admin)
+      .from("submissions")
+      .update({ reviewed_at: new Date().toISOString(), reviewed_by: user.id })
+      .eq("id", submissionId);
+    if (error) throw new Error(error.message);
+
+    await writeAudit(user.id, {
+      action: "Dismissed integrity flag",
+      target: `${sub.profiles?.name ?? "Unknown"} — ${sub.exams?.title ?? ""}`,
+      category: "integrity",
+    });
+
+    return { success: true };
   });
 
 // Server function so process.env.SUPABASE_SERVICE_ROLE_KEY is always available.

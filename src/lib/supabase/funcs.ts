@@ -172,7 +172,7 @@ export const getLecturerDashboardData = createServerFn({ method: "GET" })
         ? db(supabase).from("essay_answers").select("*", { count: "exact", head: true }).in("submission_id", submittedSubIds).is("score", null)
         : Promise.resolve({ count: 0 }),
       examIds.length > 0
-        ? db(supabase).from("submissions").select("id, exam_id, flags, submitted_at, profiles!student_id(name), exams(title, classes(code))").eq("status", "flagged").in("exam_id", examIds).order("submitted_at", { ascending: false }).limit(5)
+        ? db(supabase).from("submissions").select("id, exam_id, flags, submitted_at, profiles!student_id(name), exams(title, classes(code))").eq("status", "flagged").is("reviewed_at", null).in("exam_id", examIds).order("submitted_at", { ascending: false }).limit(5)
         : Promise.resolve({ data: [] }),
       liveExamIds.length > 0
         ? db(supabase).from("submissions").select("exam_id, status").in("exam_id", liveExamIds)
@@ -262,7 +262,7 @@ export const getAdminDashboardData = createServerFn({ method: "GET" })
       db(supabase).from("exams").select("*", { count: "exact", head: true }),
       db(supabase).from("exams").select("*", { count: "exact", head: true }).eq("status", "live"),
       admin.from("appeals").select("*", { count: "exact", head: true }).eq("status", "pending"),
-      admin.from("submissions").select("*", { count: "exact", head: true }).eq("status", "flagged"),
+      admin.from("submissions").select("*", { count: "exact", head: true }).eq("status", "flagged").is("reviewed_at", null),
       db(supabase).from("profiles").select("*", { count: "exact", head: true }).eq("status", "banned"),
     ]);
 
@@ -292,11 +292,12 @@ export const getAdminDashboardData = createServerFn({ method: "GET" })
       inProgressCount: inProgressByExam[e.id] ?? 0,
     }));
 
-    // 5 most recently auto-submitted flagged submissions
+    // 5 most recently auto-submitted flagged submissions still needing review
     const { data: flaggedRaw } = await admin
       .from("submissions")
       .select("id, flags, submitted_at, profiles!student_id(name), exams(title, classes(code))")
       .eq("status", "flagged")
+      .is("reviewed_at", null)
       .order("submitted_at", { ascending: false })
       .limit(5);
 
