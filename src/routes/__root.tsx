@@ -8,6 +8,7 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 import { Toaster } from "sonner";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 
 import appCss from "../styles.css?url";
 
@@ -116,6 +117,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <Outlet />
       <Toaster position="top-center" richColors />
+      <SpeedInsights />
     </QueryClientProvider>
   );
 }
