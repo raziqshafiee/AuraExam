@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { CheckCircle, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { WakeoutButton } from "./wakeout-button";
 import { loadHuman, extractEmbedding } from "@/lib/face-id/embedding";
 import { runLivenessCheck } from "@/lib/face-id/liveness";
@@ -13,9 +13,14 @@ interface Props {
   onDone: () => void;
 }
 
+const SUCCESS_DISPLAY_MS = 600;
+
 export function FaceIdEnroll({ onDone }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [state, setState] = useState<"idle" | "blink" | "turn" | "checking" | "retry">("idle");
+  const [cameraReady, setCameraReady] = useState(false);
+  const [state, setState] = useState<
+    "idle" | "blink" | "turn" | "detecting" | "verifying" | "success" | "retry"
+  >("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
@@ -29,6 +34,7 @@ export function FaceIdEnroll({ onDone }: Props) {
           videoRef.current.srcObject = s;
           videoRef.current.play();
         }
+        setCameraReady(true);
       })
       .catch((err: any) => {
         setCameraError(
@@ -50,7 +56,7 @@ export function FaceIdEnroll({ onDone }: Props) {
       const liveness = await runLivenessCheck(human, video, (phase) => {
         if (phase === "blink") setState("blink");
         else if (phase === "turn") setState("turn");
-        else setState("checking");
+        else setState("detecting");
       });
 
       if (!liveness.blinkDetected) {
@@ -64,6 +70,7 @@ export function FaceIdEnroll({ onDone }: Props) {
         return;
       }
 
+      setState("detecting");
       const face = await extractEmbedding(human, video);
       if (!face) {
         setState("retry");
@@ -85,6 +92,7 @@ export function FaceIdEnroll({ onDone }: Props) {
       });
       const framing = await checkFaceFraming(human, snapshotImage);
 
+      setState("verifying");
       const result = await enrollFace({
         data: {
           embedding: face.embedding,
@@ -95,8 +103,9 @@ export function FaceIdEnroll({ onDone }: Props) {
       });
 
       if (result.status === "VERIFIED") {
+        setState("success");
         toast.success("Face ID registered!");
-        onDone();
+        setTimeout(onDone, SUCCESS_DISPLAY_MS);
         return;
       }
 
@@ -108,10 +117,23 @@ export function FaceIdEnroll({ onDone }: Props) {
     }
   }
 
+  const busy =
+    state === "blink" || state === "turn" || state === "detecting" || state === "verifying" || state === "success";
+
   return (
-    <div className="space-y-3">
-      <div className="aspect-video rounded-2xl border-2 border-ink bg-secondary overflow-hidden">
+    <div className="space-y-3 max-w-lg mx-auto">
+      <div className="aspect-video rounded-2xl border-2 border-ink bg-secondary overflow-hidden relative">
         <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+        {!cameraReady && !cameraError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-secondary/90 text-sm text-muted-foreground gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" /> Starting camera…
+          </div>
+        )}
+        {state === "success" && (
+          <div className="absolute inset-0 flex items-center justify-center bg-lime/90 text-lime-foreground gap-2 font-display font-bold text-lg">
+            <CheckCircle2 className="w-6 h-6" /> Verified!
+          </div>
+        )}
       </div>
       {cameraError && (
         <div className="flex items-start gap-2 p-3 rounded-xl bg-pink/10 border-2 border-pink text-sm">
@@ -128,7 +150,7 @@ export function FaceIdEnroll({ onDone }: Props) {
       <WakeoutButton
         variant="primary"
         size="default"
-        disabled={state === "blink" || state === "turn" || state === "checking" || !!cameraError}
+        disabled={busy || !cameraReady || !!cameraError}
         onClick={runCheck}
         className="w-full"
       >
@@ -140,9 +162,17 @@ export function FaceIdEnroll({ onDone }: Props) {
           <>
             <Loader2 className="w-4 h-4 animate-spin" /> Turn your head left or right…
           </>
-        ) : state === "checking" ? (
+        ) : state === "detecting" ? (
           <>
-            <Loader2 className="w-4 h-4 animate-spin" /> Verifying…
+            <Loader2 className="w-4 h-4 animate-spin" /> Looking for your face…
+          </>
+        ) : state === "verifying" ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" /> Registering…
+          </>
+        ) : state === "success" ? (
+          <>
+            <CheckCircle2 className="w-4 h-4" /> Verified!
           </>
         ) : (
           "Start live verification"
