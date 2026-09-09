@@ -18,7 +18,7 @@ export async function loadHuman(): Promise<any> {
         body: { enabled: false },
         hand: { enabled: false },
         object: { enabled: false },
-        gesture: { enabled: false },
+        gesture: { enabled: true },
       });
       await human.load();
       await human.warmup();

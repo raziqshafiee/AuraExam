@@ -15,7 +15,7 @@ interface Props {
 
 export function FaceIdEnroll({ onDone }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [state, setState] = useState<"idle" | "checking" | "retry">("idle");
+  const [state, setState] = useState<"idle" | "blink" | "turn" | "checking" | "retry">("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
@@ -43,11 +43,27 @@ export function FaceIdEnroll({ onDone }: Props) {
   async function runCheck() {
     const video = videoRef.current;
     if (!video) return;
-    setState("checking");
+    setState("blink");
     setMessage(null);
     try {
       const human = await loadHuman();
-      const liveness = await runLivenessCheck(human, video);
+      const liveness = await runLivenessCheck(human, video, (phase) => {
+        if (phase === "blink") setState("blink");
+        else if (phase === "turn") setState("turn");
+        else setState("checking");
+      });
+
+      if (!liveness.blinkDetected) {
+        setState("retry");
+        setMessage("We didn't catch a blink — look at the camera and try again.");
+        return;
+      }
+      if (!liveness.headTurnDetected) {
+        setState("retry");
+        setMessage("We didn't catch a head turn — look at the camera and try again.");
+        return;
+      }
+
       const face = await extractEmbedding(human, video);
       if (!face) {
         setState("retry");
@@ -112,11 +128,19 @@ export function FaceIdEnroll({ onDone }: Props) {
       <WakeoutButton
         variant="primary"
         size="default"
-        disabled={state === "checking" || !!cameraError}
+        disabled={state === "blink" || state === "turn" || state === "checking" || !!cameraError}
         onClick={runCheck}
         className="w-full"
       >
-        {state === "checking" ? (
+        {state === "blink" ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" /> Blink your eyes…
+          </>
+        ) : state === "turn" ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" /> Turn your head left or right…
+          </>
+        ) : state === "checking" ? (
           <>
             <Loader2 className="w-4 h-4 animate-spin" /> Verifying…
           </>
