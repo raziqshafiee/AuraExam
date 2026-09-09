@@ -3,7 +3,7 @@ import { createClient } from "./server";
 import { createAdminClient } from "./admin-client";
 import { writeAudit } from "./audit";
 import { pushNotification } from "./notifications";
-import { cosineSimilarity } from "@/lib/face-id/compare";
+import { faceSimilarity } from "@/lib/face-id/compare";
 import { canRequestPhotoChange } from "@/lib/face-id/business-rules";
 import { FACE_ID } from "@/lib/constants";
 import { signExamToken } from "./exam-session-token";
@@ -400,7 +400,7 @@ export const checkInExam = createServerFn({ method: "POST" })
       // If those run out again it goes back to manual review, where the
       // lecturer/admin can clear or reject it again.
       if (sub.checkin_status === "rejected") {
-        const score = cosineSimilarity(profile.baseline_embedding as number[], data.embedding);
+        const score = faceSimilarity(profile.baseline_embedding as number[], data.embedding);
 
         if (score >= FACE_ID.MATCH_THRESHOLD) {
           await admin
@@ -443,7 +443,7 @@ export const checkInExam = createServerFn({ method: "POST" })
         return { outcome: "checkin-pending-review" as const, submissionId: sub.id };
       }
 
-      const score = cosineSimilarity(profile.baseline_embedding as number[], data.embedding);
+      const score = faceSimilarity(profile.baseline_embedding as number[], data.embedding);
       const attempts = attemptsSoFar + 1;
 
       if (score >= FACE_ID.MATCH_THRESHOLD) {
@@ -491,7 +491,7 @@ export const checkInExam = createServerFn({ method: "POST" })
     // transitions this to 'in-progress' and stamps started_at only once the
     // student is actually admitted, so time spent checking in (including any
     // manual-review wait) never eats into the exam's allotted duration.
-    const score = cosineSimilarity(profile.baseline_embedding as number[], data.embedding);
+    const score = faceSimilarity(profile.baseline_embedding as number[], data.embedding);
     const passed = score >= FACE_ID.MATCH_THRESHOLD;
     const { data: sub, error } = await admin
       .from("submissions")
@@ -656,7 +656,7 @@ export const checkIdentityContinuity = createServerFn({ method: "POST" })
       .maybeSingle();
     if (!profile?.baseline_embedding) return { match: true as const, score: 1 };
 
-    const score = cosineSimilarity(profile.baseline_embedding as number[], data.embedding);
+    const score = faceSimilarity(profile.baseline_embedding as number[], data.embedding);
     const match = score >= FACE_ID.MATCH_THRESHOLD;
 
     if (!match) {
