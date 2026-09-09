@@ -121,7 +121,7 @@ export function FaceIdEnroll({ onDone }: Props) {
     state === "blink" || state === "turn" || state === "detecting" || state === "verifying" || state === "success";
 
   return (
-    <div className="space-y-3 max-w-lg mx-auto">
+    <div className="space-y-3 max-w-2xl mx-auto">
       <div className="aspect-video rounded-2xl border-2 border-ink bg-secondary overflow-hidden relative">
         <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
         {!cameraReady && !cameraError && (

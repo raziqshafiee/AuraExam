@@ -125,7 +125,7 @@ function FaceIdPage() {
         title="Face ID"
         subtitle="Register your identity for exams"
       />
-      <Card className="max-w-lg">{body()}</Card>
+      <Card className="max-w-2xl">{body()}</Card>
     </>
   );
 }
