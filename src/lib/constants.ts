@@ -17,18 +17,18 @@ export const AUTOSAVE = {
 } as const;
 
 export const FACE_ID = {
-  // TEMPORARY, evidence-based only for genuine-match side so far: a real
-  // same-person check-in on this embedding model (1024-dim, unnormalized,
-  // magnitude ~11 — see compare.ts) scored 0.57 under faceSimilarity, well
-  // below this constant's previous value of 0.6, which had been guessed from
-  // the library's generic docs rather than this app's actual embedding
-  // distribution. 0.45 gives margin under that observed genuine score. Still
-  // missing: a real different-person score under this metric to confirm 0.45
-  // actually rejects an impostor — re-tune the moment that data exists rather
-  // than trusting this number long-term. Used by checkInExam (exam check-in)
-  // and checkIdentityContinuity (in-exam re-check) — enrollment no longer
-  // does a threshold match since there's no passport photo to match against.
-  MATCH_THRESHOLD: 0.45,
+  // Calibrated from real paired same-person/different-person test data on
+  // this embedding model (1024-dim, unnormalized, magnitude ~11 — see
+  // compare.ts), gathered 2026-09-09: genuine self-match scores were
+  // 0.52/0.56/0.57; a different person's face scored 0.45/0.46. 0.50 sits
+  // between both clusters, correctly separating every attempt observed so
+  // far. That margin (~0.06) is narrow on a small sample (5 attempts total)
+  // — this is not a wide safety margin, and should be re-tuned as more real
+  // check-in data accumulates, not treated as final. Used by checkInExam
+  // (exam check-in) and checkIdentityContinuity (in-exam re-check) —
+  // enrollment no longer does a threshold match since there's no passport
+  // photo to match against.
+  MATCH_THRESHOLD: 0.5,
   MAX_CHECKIN_ATTEMPTS: 3,
   COOLDOWN_DAYS: 90,
   FREEZE_HOURS: 48,
