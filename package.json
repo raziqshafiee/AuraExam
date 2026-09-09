@@ -27,6 +27,7 @@
     "clear:exam-data": "tsx scripts/clear-exam-data.ts",
     "clear:submissions": "tsx scripts/clear-submissions.ts",
     "clear:appeals": "tsx scripts/clear-appeals.ts",
+    "clear:face-id": "tsx scripts/clear-face-id.ts",
     "migrate:submission-rls": "tsx scripts/migrate-submission-rls.ts",
     "migrate:submission-started-at": "tsx scripts/migrate-submission-started-at.ts",
     "migrate:submission-review": "tsx scripts/migrate-submission-review.ts",
