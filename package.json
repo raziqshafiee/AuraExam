@@ -39,6 +39,7 @@
     "migrate:face-id": "tsx scripts/migrate-face-id.ts",
     "migrate:face-id-rls": "tsx scripts/migrate-face-id-rls.ts",
     "migrate:face-id-status-check": "tsx scripts/migrate-face-id-status-check.ts",
+    "migrate:face-id-no-passport": "tsx scripts/migrate-face-id-no-passport.ts",
     "migrate:audit-category": "tsx scripts/migrate-audit-category.ts",
     "migrate:audit-registration": "tsx scripts/migrate-audit-registration.ts",
     "migrate:checkin-rejection-reason": "tsx scripts/migrate-checkin-rejection-reason.ts",
