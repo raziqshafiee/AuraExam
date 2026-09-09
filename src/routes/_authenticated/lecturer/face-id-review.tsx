@@ -1,14 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { PageHeader, Card } from "@/components/brand/page";
+import { PageHeader } from "@/components/brand/page";
 import { FacialReviewCard } from "@/components/brand/facial-review-card";
-import {
-  getFacialReviewQueue,
-  reviewFacialProfile,
-  getCheckinQueue,
-  reviewCheckin,
-} from "@/lib/supabase/face-id";
+import { ConfirmModal } from "@/components/brand/confirm-modal";
+import { WakeoutButton } from "@/components/brand/wakeout-button";
+import { getCheckinQueue, reviewCheckin, resetFacialProfile } from "@/lib/supabase/face-id";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/lecturer/face-id-review")({
@@ -16,8 +13,10 @@ export const Route = createFileRoute("/_authenticated/lecturer/face-id-review")(
   component: FaceIdReviewPage,
 });
 
-function CheckinQueueTab() {
+function FaceIdReviewPage() {
   const queryClient = useQueryClient();
+  const [resetTarget, setResetTarget] = useState<{ userId: string; name: string } | null>(null);
+  const [resetting, setResetting] = useState(false);
   const { data: rows } = useQuery({
     queryKey: ["checkin-queue"],
     queryFn: () => getCheckinQueue(),
@@ -26,42 +25,22 @@ function CheckinQueueTab() {
     refetchInterval: 15_000,
   });
 
-  return (
-    <div className="grid md:grid-cols-2 gap-4">
-      {(rows ?? []).length === 0 && (
-        <p className="text-sm text-muted-foreground">No students waiting on check-in review.</p>
-      )}
-      {(rows ?? []).map((row) => (
-        <FacialReviewCard
-          key={row.submissionId}
-          name={row.studentName}
-          subtitle={row.examTitle}
-          photoUrl={row.photoUrl}
-          snapshotUrl={row.snapshotUrl}
-          score={row.score}
-          onApprove={async () => {
-            await reviewCheckin({ data: { submissionId: row.submissionId, action: "clear" } });
-            queryClient.invalidateQueries({ queryKey: ["checkin-queue"] });
-          }}
-          onReject={async (reason) => {
-            await reviewCheckin({
-              data: { submissionId: row.submissionId, action: "reject", reason },
-            });
-            queryClient.invalidateQueries({ queryKey: ["checkin-queue"] });
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function FaceIdReviewPage() {
-  const [tab, setTab] = useState<"registrations" | "checkins">("registrations");
-  const queryClient = useQueryClient();
-  const { data: queue } = useQuery({
-    queryKey: ["face-id-review-queue"],
-    queryFn: () => getFacialReviewQueue(),
-  });
+  async function runReset() {
+    if (!resetTarget) return;
+    setResetting(true);
+    try {
+      await resetFacialProfile({
+        data: { userId: resetTarget.userId, reason: "Manual reset by lecturer" },
+      });
+      toast.success(`${resetTarget.name}'s Face ID was reset`);
+      queryClient.invalidateQueries({ queryKey: ["checkin-queue"] });
+      setResetTarget(null);
+    } catch (err: any) {
+      toast.error(err?.message ?? "Couldn't reset Face ID. Try again.");
+    } finally {
+      setResetting(false);
+    }
+  }
 
   return (
     <>
@@ -69,51 +48,53 @@ function FaceIdReviewPage() {
         badge="Review"
         badgeColor="bg-violet"
         title="Face ID Review"
-        subtitle="Registrations awaiting manual verification"
+        subtitle="Exam check-ins awaiting manual verification"
       />
-      <div className="flex gap-2 mb-4">
-        <button
-          onClick={() => setTab("registrations")}
-          className={`px-3 py-1.5 rounded-full border-2 border-ink text-sm ${tab === "registrations" ? "bg-violet text-violet-foreground" : ""}`}
-        >
-          Registrations
-        </button>
-        <button
-          onClick={() => setTab("checkins")}
-          className={`px-3 py-1.5 rounded-full border-2 border-ink text-sm ${tab === "checkins" ? "bg-violet text-violet-foreground" : ""}`}
-        >
-          Exam Check-ins
-        </button>
-      </div>
-      {tab === "registrations" && (
-        <div className="grid md:grid-cols-2 gap-4">
-          {(queue ?? []).length === 0 && (
-            <p className="text-sm text-muted-foreground">No registrations pending review.</p>
-          )}
-          {(queue ?? []).map((row) => (
+      <div className="grid md:grid-cols-2 gap-4">
+        {(rows ?? []).length === 0 && (
+          <p className="text-sm text-muted-foreground">No students waiting on check-in review.</p>
+        )}
+        {(rows ?? []).map((row) => (
+          <div key={row.submissionId} className="space-y-2">
             <FacialReviewCard
-              key={row.userId}
-              name={row.name}
-              subtitle={row.email}
+              name={row.studentName}
+              subtitle={row.examTitle}
               photoUrl={row.photoUrl}
               snapshotUrl={row.snapshotUrl}
+              score={row.score}
               onApprove={async () => {
-                await reviewFacialProfile({ data: { userId: row.userId, action: "APPROVE" } });
-                toast.success(`${row.name} approved`);
-                queryClient.invalidateQueries({ queryKey: ["face-id-review-queue"] });
+                await reviewCheckin({ data: { submissionId: row.submissionId, action: "clear" } });
+                queryClient.invalidateQueries({ queryKey: ["checkin-queue"] });
               }}
               onReject={async (reason) => {
-                await reviewFacialProfile({
-                  data: { userId: row.userId, action: "REJECT", reason },
+                await reviewCheckin({
+                  data: { submissionId: row.submissionId, action: "reject", reason },
                 });
-                toast.success(`${row.name} rejected`);
-                queryClient.invalidateQueries({ queryKey: ["face-id-review-queue"] });
+                queryClient.invalidateQueries({ queryKey: ["checkin-queue"] });
               }}
             />
-          ))}
-        </div>
-      )}
-      {tab === "checkins" && <CheckinQueueTab />}
+            <WakeoutButton
+              variant="ghost"
+              size="sm"
+              onClick={() => setResetTarget({ userId: row.studentId, name: row.studentName })}
+            >
+              Reset Face ID
+            </WakeoutButton>
+          </div>
+        ))}
+      </div>
+      <ConfirmModal
+        open={resetTarget !== null}
+        title="Reset Face ID?"
+        message={`"${resetTarget?.name}" will need to re-register their Face ID from scratch before their next exam.`}
+        confirmLabel="Reset"
+        danger
+        loading={resetting}
+        onConfirm={runReset}
+        onClose={() => {
+          if (!resetting) setResetTarget(null);
+        }}
+      />
     </>
   );
 }
