@@ -19,7 +19,7 @@ export function isFramedCorrectly(
 
 export type PassportPhotoCheck = { ok: true } | { ok: false; reason: string };
 
-export async function checkPassportPhoto(
+export async function checkFaceFraming(
   human: any,
   image: HTMLImageElement,
 ): Promise<PassportPhotoCheck> {
