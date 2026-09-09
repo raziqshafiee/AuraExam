@@ -17,17 +17,18 @@ export const AUTOSAVE = {
 } as const;
 
 export const FACE_ID = {
-  // Reset after switching the underlying metric from plain cosine similarity
-  // to faceSimilarity (compare.ts) — human.js's own Euclidean-distance-based
-  // formula, whose documented match boundary is 0.5. The 0.85/0.80/0.70
-  // values this constant carried previously were calibrated for cosine
-  // similarity and don't carry over; 0.6 gives some margin above the bare
-  // "match" line for a security-sensitive check. Tune based on observed
-  // production scores now that the metric itself is meaningful. Used by
-  // checkInExam (exam check-in) and checkIdentityContinuity (in-exam
-  // re-check) — enrollment no longer does a threshold match since there's no
-  // passport photo to match against.
-  MATCH_THRESHOLD: 0.6,
+  // TEMPORARY, evidence-based only for genuine-match side so far: a real
+  // same-person check-in on this embedding model (1024-dim, unnormalized,
+  // magnitude ~11 — see compare.ts) scored 0.57 under faceSimilarity, well
+  // below this constant's previous value of 0.6, which had been guessed from
+  // the library's generic docs rather than this app's actual embedding
+  // distribution. 0.45 gives margin under that observed genuine score. Still
+  // missing: a real different-person score under this metric to confirm 0.45
+  // actually rejects an impostor — re-tune the moment that data exists rather
+  // than trusting this number long-term. Used by checkInExam (exam check-in)
+  // and checkIdentityContinuity (in-exam re-check) — enrollment no longer
+  // does a threshold match since there's no passport photo to match against.
+  MATCH_THRESHOLD: 0.45,
   MAX_CHECKIN_ATTEMPTS: 3,
   COOLDOWN_DAYS: 90,
   FREEZE_HOURS: 48,
