@@ -1,24 +1,3 @@
-export interface RegistrationOutcome {
-  status: "VERIFIED" | "RETRY" | "PENDING_REVIEW";
-  attemptsRemaining: number;
-}
-
-export function nextRegistrationOutcome(
-  attemptsSoFar: number,
-  score: number,
-  threshold: number,
-  maxAttempts: number,
-): RegistrationOutcome {
-  if (score >= threshold) {
-    return { status: "VERIFIED", attemptsRemaining: maxAttempts };
-  }
-  const attempts = attemptsSoFar + 1;
-  if (attempts >= maxAttempts) {
-    return { status: "PENDING_REVIEW", attemptsRemaining: 0 };
-  }
-  return { status: "RETRY", attemptsRemaining: maxAttempts - attempts };
-}
-
 export interface PhotoChangeCheck {
   allowed: boolean;
   reason?: string;
