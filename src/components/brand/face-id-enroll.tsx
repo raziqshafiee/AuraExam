@@ -5,17 +5,17 @@ import { CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { WakeoutButton } from "./wakeout-button";
 import { loadHuman, extractEmbedding } from "@/lib/face-id/embedding";
 import { runLivenessCheck } from "@/lib/face-id/liveness";
-import { verifyEnrolment } from "@/lib/supabase/face-id";
+import { checkFaceFraming } from "@/lib/face-id/quality";
+import { enrollFace } from "@/lib/supabase/face-id";
 import { toast } from "sonner";
 
 interface Props {
-  passportEmbedding: number[];
-  onDone: (status: "VERIFIED" | "PENDING_REVIEW") => void;
+  onDone: () => void;
 }
 
-export function FaceIdEnroll({ passportEmbedding, onDone }: Props) {
+export function FaceIdEnroll({ onDone }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [state, setState] = useState<"idle" | "checking" | "retry" | "failed">("idle");
+  const [state, setState] = useState<"idle" | "checking" | "retry">("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
@@ -61,28 +61,31 @@ export function FaceIdEnroll({ passportEmbedding, onDone }: Props) {
       canvas.getContext("2d")?.drawImage(video, 0, 0);
       const snapshotBase64 = canvas.toDataURL("image/jpeg", 0.6);
 
-      const result = await verifyEnrolment({
+      const snapshotImage = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = snapshotBase64;
+      });
+      const framing = await checkFaceFraming(human, snapshotImage);
+
+      const result = await enrollFace({
         data: {
-          passportEmbedding,
-          liveEmbedding: face.embedding,
+          embedding: face.embedding,
           livenessPassed: liveness.passed,
-          liveSnapshotBase64: snapshotBase64,
+          qualityPassed: framing.ok,
+          snapshotBase64,
         },
       });
 
       if (result.status === "VERIFIED") {
         toast.success("Face ID registered!");
-        onDone("VERIFIED");
-      } else if (result.status === "PENDING_REVIEW") {
-        setState("failed");
-        setMessage(
-          "We couldn't confirm a match after 3 attempts. Sent to your lecturer for review.",
-        );
-        onDone("PENDING_REVIEW");
-      } else {
-        setState("retry");
-        setMessage(`Face didn't match. ${result.attemptsRemaining} attempt(s) left.`);
+        onDone();
+        return;
       }
+
+      setState("retry");
+      setMessage(result.reason);
     } catch (err: any) {
       setState("retry");
       setMessage(err?.message ?? "Something went wrong. Try again.");
@@ -102,31 +105,25 @@ export function FaceIdEnroll({ passportEmbedding, onDone }: Props) {
       )}
       {message && (
         <div className="flex items-start gap-2 p-3 rounded-xl bg-amber/10 border-2 border-amber text-sm">
-          {state === "failed" ? (
-            <XCircle className="w-4 h-4 shrink-0 mt-0.5 text-pink" />
-          ) : (
-            <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-700" />
-          )}
+          <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-700" />
           {message}
         </div>
       )}
-      {state !== "failed" && (
-        <WakeoutButton
-          variant="primary"
-          size="default"
-          disabled={state === "checking" || !!cameraError}
-          onClick={runCheck}
-          className="w-full"
-        >
-          {state === "checking" ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" /> Verifying…
-            </>
-          ) : (
-            "Start live verification"
-          )}
-        </WakeoutButton>
-      )}
+      <WakeoutButton
+        variant="primary"
+        size="default"
+        disabled={state === "checking" || !!cameraError}
+        onClick={runCheck}
+        className="w-full"
+      >
+        {state === "checking" ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" /> Verifying…
+          </>
+        ) : (
+          "Start live verification"
+        )}
+      </WakeoutButton>
     </div>
   );
 }
