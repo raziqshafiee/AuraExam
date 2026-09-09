@@ -17,11 +17,11 @@ export const AUTOSAVE = {
 } as const;
 
 export const FACE_ID = {
-  // Lowered to 0.70 by owner decision (was 0.80, and before that a design doc
-  // specified 0.85). Used by checkInExam (exam check-in) and
-  // checkIdentityContinuity (in-exam re-check) — enrollment no longer does a
-  // threshold match since there's no passport photo to match against.
-  MATCH_THRESHOLD: 0.7,
+  // Raised back to 0.80 by owner decision (had been lowered to 0.70; before
+  // that a design doc specified 0.85). Used by checkInExam (exam check-in)
+  // and checkIdentityContinuity (in-exam re-check) — enrollment no longer
+  // does a threshold match since there's no passport photo to match against.
+  MATCH_THRESHOLD: 0.8,
   MAX_CHECKIN_ATTEMPTS: 3,
   COOLDOWN_DAYS: 90,
   FREEZE_HOURS: 48,
