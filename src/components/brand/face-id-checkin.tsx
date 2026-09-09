@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 import { WakeoutButton } from "./wakeout-button";
 import { loadHuman, extractEmbedding } from "@/lib/face-id/embedding";
 import { checkInExam } from "@/lib/supabase/face-id";
@@ -11,9 +11,14 @@ interface Props {
   onPassed: (token: string) => void;
 }
 
+const SUCCESS_DISPLAY_MS = 600;
+
 export function FaceIdCheckin({ examId, onPassed }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [state, setState] = useState<"idle" | "checking" | "retry" | "waiting">("idle");
+  const [cameraReady, setCameraReady] = useState(false);
+  const [state, setState] = useState<
+    "idle" | "detecting" | "verifying" | "success" | "retry" | "waiting"
+  >("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
@@ -43,6 +48,7 @@ export function FaceIdCheckin({ examId, onPassed }: Props) {
           videoRef.current.srcObject = s;
           videoRef.current.play();
         }
+        setCameraReady(true);
       })
       .catch((err: any) => {
         setCameraError(
@@ -75,7 +81,8 @@ export function FaceIdCheckin({ examId, onPassed }: Props) {
         });
         if (result.outcome === "verified") {
           clearInterval(interval);
-          onPassed(result.token);
+          setState("success");
+          setTimeout(() => onPassed(result.token), SUCCESS_DISPLAY_MS);
         }
       } catch {
         // A poll that fails (network blip, exam window closed) must not throw
@@ -88,16 +95,18 @@ export function FaceIdCheckin({ examId, onPassed }: Props) {
   async function runCheck() {
     const video = videoRef.current;
     if (!video) return;
-    setState("checking");
+    setState("detecting");
     setMessage(null);
     try {
       const human = await loadHuman();
       const face = await extractEmbedding(human, video);
       if (!face) {
         setState("retry");
-        setMessage("No face detected — position yourself in front of the camera.");
+        setMessage("No face detected — center yourself in the frame and try again.");
         return;
       }
+
+      setState("verifying");
       const result = await checkInExam({
         data: {
           examId,
@@ -106,15 +115,18 @@ export function FaceIdCheckin({ examId, onPassed }: Props) {
         },
       });
       if (result.outcome === "verified") {
-        onPassed(result.token);
+        setState("success");
+        setTimeout(() => onPassed(result.token), SUCCESS_DISPLAY_MS);
       } else if (result.outcome === "checkin-pending-review") {
         setState("waiting");
         setMessage(
-          "We couldn't confirm a match. Waiting for your lecturer or admin to clear you in.",
+          "We couldn't confirm a match after a few tries. Waiting for your lecturer or admin to clear you in.",
         );
       } else {
         setState("retry");
-        setMessage(`Face didn't match. ${result.attemptsRemaining} attempt(s) left.`);
+        setMessage(
+          `That didn't match your registered Face ID. ${result.attemptsRemaining} attempt(s) left.`,
+        );
       }
     } catch (err: any) {
       setState("retry");
@@ -122,10 +134,22 @@ export function FaceIdCheckin({ examId, onPassed }: Props) {
     }
   }
 
+  const busy = state === "detecting" || state === "verifying" || state === "success";
+
   return (
     <div className="space-y-3">
-      <div className="aspect-video rounded-2xl border-2 border-ink bg-secondary overflow-hidden">
+      <div className="aspect-video rounded-2xl border-2 border-ink bg-secondary overflow-hidden relative">
         <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+        {!cameraReady && !cameraError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-secondary/90 text-sm text-muted-foreground gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" /> Starting camera…
+          </div>
+        )}
+        {state === "success" && (
+          <div className="absolute inset-0 flex items-center justify-center bg-lime/90 text-lime-foreground gap-2 font-display font-bold text-lg">
+            <CheckCircle2 className="w-6 h-6" /> Verified!
+          </div>
+        )}
       </div>
       {cameraError && (
         <div className="flex items-start gap-2 p-3 rounded-xl bg-pink/10 border-2 border-pink text-sm">
@@ -143,13 +167,21 @@ export function FaceIdCheckin({ examId, onPassed }: Props) {
         <WakeoutButton
           variant="primary"
           size="default"
-          disabled={state === "checking" || !!cameraError}
+          disabled={busy || !cameraReady || !!cameraError}
           onClick={runCheck}
           className="w-full"
         >
-          {state === "checking" ? (
+          {state === "detecting" ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin" /> Checking in…
+              <Loader2 className="w-4 h-4 animate-spin" /> Looking for your face…
+            </>
+          ) : state === "verifying" ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" /> Confirming it's you…
+            </>
+          ) : state === "success" ? (
+            <>
+              <CheckCircle2 className="w-4 h-4" /> Verified!
             </>
           ) : (
             "Start Face ID check-in"
