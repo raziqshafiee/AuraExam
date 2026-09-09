@@ -387,13 +387,14 @@ export const checkInExam = createServerFn({ method: "POST" })
 
     if (existing.data) {
       const sub = existing.data;
-      if (sub.checkin_status === "verified") {
-        return {
-          outcome: "verified" as const,
-          submissionId: sub.id,
-          token: await mintToken(sub.id),
-        };
-      }
+      // Deliberately no "already verified, skip straight to a token" branch
+      // here — a fresh embedding always has to re-clear the threshold, even
+      // for a submission that's already checkin_status='verified'. A
+      // legitimate returning student (lost token, refreshed the lobby) still
+      // passes trivially since it's really them; without this, anyone could
+      // walk up after a genuine first check-in and "check in" again with a
+      // different face, since the server would mint a token without ever
+      // looking at what was just captured.
 
       // A rejected check-in no longer dead-ends the attempt — the student gets
       // a fresh round of biometric attempts, exactly like a first check-in.
