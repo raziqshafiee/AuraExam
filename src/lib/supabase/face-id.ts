@@ -4,7 +4,7 @@ import { createAdminClient } from "./admin-client";
 import { writeAudit } from "./audit";
 import { pushNotification } from "./notifications";
 import { cosineSimilarity } from "@/lib/face-id/compare";
-import { nextRegistrationOutcome, canRequestPhotoChange } from "@/lib/face-id/business-rules";
+import { canRequestPhotoChange } from "@/lib/face-id/business-rules";
 import { FACE_ID } from "@/lib/constants";
 import { signExamToken } from "./exam-session-token";
 import { MY_TZ } from "@/lib/datetime";
@@ -56,8 +56,7 @@ async function getPhotoChangeEligibility(
 }
 
 export type MyFacialProfile = {
-  status: "UNREGISTERED" | "VERIFIED" | "PENDING_REVIEW" | "REJECTED";
-  rejectionReason: string | null;
+  status: "UNREGISTERED" | "VERIFIED";
   isPhotoLocked: boolean;
   photoUrl: string | null;
   lastPhotoUpdate: string | null;
@@ -66,10 +65,10 @@ export type MyFacialProfile = {
 };
 
 // GET: the caller's own Face ID registration status, so the student page can
-// show where they stand instead of always restarting at the upload step.
+// show where they stand instead of always restarting at the enroll step.
 // Reads run in the caller's context — the owner-SELECT RLS policy is what
 // scopes this to their own row. photoUrl is a 30-minute signed URL to the
-// registered passport photo — used to show it as the profile picture.
+// live-captured enrollment still — used to show it as the profile picture.
 export const getMyFacialProfile = createServerFn({ method: "GET" }).handler(
   async (): Promise<MyFacialProfile> => {
     const supabase = createClient();
@@ -80,7 +79,7 @@ export const getMyFacialProfile = createServerFn({ method: "GET" }).handler(
 
     const { data: profile } = await db(supabase)
       .from("user_facial_profiles")
-      .select("status, rejection_reason, is_photo_locked, last_photo_update")
+      .select("status, is_photo_locked, last_photo_update")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -96,7 +95,6 @@ export const getMyFacialProfile = createServerFn({ method: "GET" }).handler(
 
     return {
       status: (profile?.status ?? "UNREGISTERED") as MyFacialProfile["status"],
-      rejectionReason: profile?.rejection_reason ?? null,
       isPhotoLocked: profile?.is_photo_locked ?? false,
       photoUrl,
       lastPhotoUpdate: profile?.last_photo_update ?? null,
@@ -105,41 +103,6 @@ export const getMyFacialProfile = createServerFn({ method: "GET" }).handler(
     };
   },
 );
-
-// POST: upload a passport photo. Does not lock/verify — that happens in
-// verifyEnrolment once the live-frame match succeeds.
-export const registerPassportPhoto = createServerFn({ method: "POST" })
-  .inputValidator((data: { photoBase64: string }) => data)
-  .handler(async ({ data }) => {
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error("Unauthorized");
-
-    const { data: profile } = await db(supabase)
-      .from("user_facial_profiles")
-      .select("is_photo_locked")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (profile?.is_photo_locked) {
-      throw new Error("Your photo is locked. Request a photo change first.");
-    }
-
-    const admin = createAdminClient();
-    const path = `${user.id}/passport.jpg`;
-    const { error: uploadError } = await admin.storage
-      .from(FACIAL_PROFILES_BUCKET)
-      .upload(path, base64ToBuffer(data.photoBase64), { contentType: "image/jpeg", upsert: true });
-    if (uploadError) throw new Error(uploadError.message);
-
-    await admin
-      .from("user_facial_profiles")
-      .upsert({ user_id: user.id, photo_url: path, status: profile ? undefined : "UNREGISTERED" });
-
-    return { photoPath: path };
-  });
 
 // POST: unlock a locked, verified profile for one new registration cycle,
 // subject to the 90-day cooldown and 48-hour pre-exam freeze window.
@@ -171,16 +134,19 @@ export const requestPhotoChange = createServerFn({ method: "POST" }).handler(asy
   return { unlocked: true as const };
 });
 
-// POST: 1:1 match between the passport-photo embedding and a live webcam
-// embedding. Server-authoritative — the client's own locally-computed score,
-// if any, is never trusted.
-export const verifyEnrolment = createServerFn({ method: "POST" })
+// POST: enroll (or re-enroll after a photo-change unlock) a Face ID profile
+// from a single live webcam capture. There's no upload to match against
+// anymore — liveness and framing-quality are checked client-side (the same
+// trust level `livenessPassed` already had in the old passport-match flow)
+// and gate whether this frame's embedding becomes the baseline. A failing
+// check is just a client-side retry, never a DB write.
+export const enrollFace = createServerFn({ method: "POST" })
   .inputValidator(
     (data: {
-      passportEmbedding: number[];
-      liveEmbedding: number[];
+      embedding: number[];
       livenessPassed: boolean;
-      liveSnapshotBase64?: string;
+      qualityPassed: boolean;
+      snapshotBase64: string;
     }) => data,
   )
   .handler(async ({ data }) => {
@@ -192,163 +158,59 @@ export const verifyEnrolment = createServerFn({ method: "POST" })
 
     const { data: profile } = await db(supabase)
       .from("user_facial_profiles")
-      .select("verification_attempts, is_photo_locked")
+      .select("is_photo_locked")
       .eq("user_id", user.id)
       .maybeSingle();
 
     if (profile?.is_photo_locked) {
-      throw new Error("Your photo is already locked and verified.");
+      throw new Error("Your Face ID is already verified. Request a photo change first.");
     }
 
-    const score = cosineSimilarity(data.passportEmbedding, data.liveEmbedding);
-    const effectiveScore = data.livenessPassed ? score : 0;
-    const outcome = nextRegistrationOutcome(
-      profile?.verification_attempts ?? 0,
-      effectiveScore,
-      FACE_ID.MATCH_THRESHOLD,
-      FACE_ID.MAX_ENROLL_ATTEMPTS,
-    );
+    if (!data.livenessPassed) {
+      return {
+        status: "RETRY" as const,
+        reason: "Liveness check failed — make sure you're in good lighting and try again.",
+      };
+    }
+    if (!data.qualityPassed) {
+      return {
+        status: "RETRY" as const,
+        reason: "Face wasn't framed correctly — move closer or further and try again.",
+      };
+    }
 
     const admin = createAdminClient();
-
-    if (outcome.status === "VERIFIED") {
-      await admin.from("user_facial_profiles").upsert({
-        user_id: user.id,
-        status: "VERIFIED",
-        baseline_embedding: data.liveEmbedding,
-        pending_embedding: null,
-        is_photo_locked: true,
-        verification_attempts: 0,
-        last_photo_update: new Date().toISOString(),
-        rejection_reason: null,
-      });
-      await writeAudit(user.id, {
-        action: "Face ID registration verified",
-        target: user.id,
-        category: "identity",
-      });
-      return { status: "VERIFIED" as const, score };
-    }
-
-    if (outcome.status === "PENDING_REVIEW") {
-      if (data.liveSnapshotBase64) {
-        await admin.storage
-          .from(FACIAL_PROFILES_BUCKET)
-          .upload(`${user.id}/review-${Date.now()}.jpg`, base64ToBuffer(data.liveSnapshotBase64), {
-            contentType: "image/jpeg",
-            upsert: true,
-          });
-      }
-      await admin.from("user_facial_profiles").upsert({
-        user_id: user.id,
-        status: "PENDING_REVIEW",
-        pending_embedding: data.liveEmbedding,
-        verification_attempts: FACE_ID.MAX_ENROLL_ATTEMPTS,
-      });
-      await writeAudit(user.id, {
-        action: "Face ID registration sent to manual review",
-        target: user.id,
-        category: "identity",
-      });
-      return { status: "PENDING_REVIEW" as const, score };
-    }
+    const path = `${user.id}/enrollment.jpg`;
+    const { error: uploadError } = await admin.storage
+      .from(FACIAL_PROFILES_BUCKET)
+      .upload(path, base64ToBuffer(data.snapshotBase64), { contentType: "image/jpeg", upsert: true });
+    if (uploadError) throw new Error(uploadError.message);
 
     await admin.from("user_facial_profiles").upsert({
       user_id: user.id,
-      status: "UNREGISTERED",
-      verification_attempts: FACE_ID.MAX_ENROLL_ATTEMPTS - outcome.attemptsRemaining,
+      status: "VERIFIED",
+      baseline_embedding: data.embedding,
+      photo_url: path,
+      is_photo_locked: true,
+      last_photo_update: new Date().toISOString(),
     });
-    return { status: "RETRY" as const, score, attemptsRemaining: outcome.attemptsRemaining };
+
+    await writeAudit(user.id, {
+      action: "Face ID registration verified",
+      target: user.id,
+      category: "identity",
+    });
+
+    return { status: "VERIFIED" as const };
   });
 
-// Signs the two images a reviewer needs side by side: the registered passport
-// photo and the most recent live snapshot matching `snapshotPrefix`. Snapshot
-// filenames embed a millisecond timestamp, so a descending name sort puts the
-// newest one first.
-async function signedFacialProfileUrls(
-  userId: string,
-  snapshotPrefix = "review-",
-): Promise<{ photoUrl: string | null; snapshotUrl: string | null }> {
-  const admin = createAdminClient();
-  const { data: files } = await admin.storage.from(FACIAL_PROFILES_BUCKET).list(userId, {
-    limit: 1000,
-    sortBy: { column: "name", order: "desc" },
-  });
-  const names = (files ?? []).map((f: any) => f.name);
-  const passportName = names.find((n: string) => n === "passport.jpg");
-  const snapshotName = names.find((n: string) => n.startsWith(snapshotPrefix));
-
-  const paths = [passportName, snapshotName].filter(Boolean).map((n) => `${userId}/${n}`);
-  if (paths.length === 0) return { photoUrl: null, snapshotUrl: null };
-
-  const { data: signed } = await admin.storage
-    .from(FACIAL_PROFILES_BUCKET)
-    .createSignedUrls(paths, 60 * 30);
-  const urlFor = (name?: string) =>
-    name
-      ? ((signed ?? []).find((s: any) => s.path === `${userId}/${name}`)?.signedUrl ?? null)
-      : null;
-
-  return { photoUrl: urlFor(passportName), snapshotUrl: urlFor(snapshotName) };
-}
-
-// GET: PENDING_REVIEW registrations. Admin sees every profile; a lecturer
-// sees only students enrolled in a class they teach.
-export const getFacialReviewQueue = createServerFn({ method: "GET" }).handler(async () => {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Unauthorized");
-
-  const { data: me } = await db(supabase)
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  if (me?.role !== "admin" && me?.role !== "lecturer") throw new Error("Unauthorized");
-
-  const admin = createAdminClient();
-  let query = admin
-    .from("user_facial_profiles")
-    .select("user_id, verification_attempts, profiles!user_id(name)")
-    .eq("status", "PENDING_REVIEW");
-
-  if (me.role === "lecturer") {
-    const { data: rosterRows } = await admin
-      .from("class_enrollments")
-      .select("student_id, classes!inner(lecturer_id)")
-      .eq("classes.lecturer_id", user.id);
-    const studentIds = [...new Set((rosterRows ?? []).map((r: any) => r.student_id))];
-    if (studentIds.length === 0) return [];
-    query = query.in("user_id", studentIds);
-  }
-
-  const { data: rows, error } = await query;
-  if (error) throw new Error(error.message);
-
-  // profiles has no email column — emails live in auth.users, matched here
-  // the same way getAllUsers (users.ts) does it.
-  const { data: authData } = await admin.auth.admin.listUsers({ perPage: 1000 });
-  const emailMap = new Map((authData?.users ?? []).map((u) => [u.id, u.email ?? ""]));
-
-  return Promise.all(
-    (rows ?? []).map(async (r: any) => {
-      const { photoUrl, snapshotUrl } = await signedFacialProfileUrls(r.user_id);
-      return {
-        userId: r.user_id as string,
-        name: r.profiles?.name ?? "Unknown",
-        email: emailMap.get(r.user_id) ?? "",
-        photoUrl,
-        snapshotUrl,
-      };
-    }),
-  );
-});
-
-// POST: approve/reject a PENDING_REVIEW registration.
-export const reviewFacialProfile = createServerFn({ method: "POST" })
-  .inputValidator((data: { userId: string; action: "APPROVE" | "REJECT"; reason?: string }) => data)
+// POST: on-demand reset of a student's Face ID back to UNREGISTERED, wiping
+// their baseline and stored photo. Admin can reset any student; a lecturer
+// only students enrolled in a class they teach. Replaces the old
+// queue-based REJECT action — there's no review queue to reject an
+// enrollment from anymore, so this is the manual override instead.
+export const resetFacialProfile = createServerFn({ method: "POST" })
+  .inputValidator((data: { userId: string; reason: string }) => data)
   .handler(async ({ data }) => {
     const supabase = createClient();
     const {
@@ -375,64 +237,64 @@ export const reviewFacialProfile = createServerFn({ method: "POST" })
       if (!enrolled) throw new Error("Forbidden");
     }
 
-    const { data: profile } = await admin
-      .from("user_facial_profiles")
-      .select("status, pending_embedding")
-      .eq("user_id", data.userId)
-      .single();
-    if (!profile || profile.status !== "PENDING_REVIEW") {
-      throw new Error("This profile is not awaiting review.");
+    await admin.from("user_facial_profiles").delete().eq("user_id", data.userId);
+
+    const { data: files } = await admin.storage
+      .from(FACIAL_PROFILES_BUCKET)
+      .list(data.userId, { limit: 1000 });
+    if (files && files.length > 0) {
+      await admin.storage
+        .from(FACIAL_PROFILES_BUCKET)
+        .remove(files.map((f: any) => `${data.userId}/${f.name}`))
+        .catch(() => {});
     }
 
-    if (data.action === "APPROVE") {
-      await admin
-        .from("user_facial_profiles")
-        .update({
-          status: "VERIFIED",
-          baseline_embedding: profile.pending_embedding,
-          pending_embedding: null,
-          is_photo_locked: true,
-          approved_by: user.id,
-          last_photo_update: new Date().toISOString(),
-          rejection_reason: null,
-        })
-        .eq("user_id", data.userId);
-      await writeAudit(user.id, {
-        action: `Approved Face ID registration for ${data.userId}`,
-        target: data.userId,
-        category: "identity",
-      });
-      await pushNotification(supabase, {
-        userId: data.userId,
-        type: "face_id_approved",
-        title: "Face ID approved",
-        body: "Your Face ID registration was approved by a reviewer.",
-      }).catch(() => {});
-    } else {
-      await admin
-        .from("user_facial_profiles")
-        .update({
-          status: "REJECTED",
-          pending_embedding: null,
-          rejection_reason: data.reason ?? null,
-          verification_attempts: 0,
-        })
-        .eq("user_id", data.userId);
-      await writeAudit(user.id, {
-        action: `Rejected Face ID registration for ${data.userId}`,
-        target: data.userId,
-        category: "identity",
-      });
-      await pushNotification(supabase, {
-        userId: data.userId,
-        type: "face_id_rejected",
-        title: "Face ID registration rejected",
-        body: data.reason ?? "Please re-register with a clearer photo.",
-      }).catch(() => {});
-    }
+    await writeAudit(user.id, {
+      action: `Reset Face ID for ${data.userId}: ${data.reason}`,
+      target: data.userId,
+      category: "identity",
+    });
+
+    await pushNotification(supabase, {
+      userId: data.userId,
+      type: "face_id_reset",
+      title: "Face ID reset",
+      body: "Your Face ID was reset by a reviewer — please re-register.",
+    }).catch(() => {});
 
     return { ok: true as const };
   });
+
+// Signs the two images a reviewer needs side by side: the registered passport
+// photo and the most recent live snapshot matching `snapshotPrefix`. Snapshot
+// filenames embed a millisecond timestamp, so a descending name sort puts the
+// newest one first.
+async function signedFacialProfileUrls(
+  userId: string,
+  snapshotPrefix = "review-",
+): Promise<{ photoUrl: string | null; snapshotUrl: string | null }> {
+  const admin = createAdminClient();
+  const { data: files } = await admin.storage.from(FACIAL_PROFILES_BUCKET).list(userId, {
+    limit: 1000,
+    sortBy: { column: "name", order: "desc" },
+  });
+  const names = (files ?? []).map((f: any) => f.name);
+  const passportName = names.find((n: string) => n === "enrollment.jpg");
+  const snapshotName = names.find((n: string) => n.startsWith(snapshotPrefix));
+
+  const paths = [passportName, snapshotName].filter(Boolean).map((n) => `${userId}/${n}`);
+  if (paths.length === 0) return { photoUrl: null, snapshotUrl: null };
+
+  const { data: signed } = await admin.storage
+    .from(FACIAL_PROFILES_BUCKET)
+    .createSignedUrls(paths, 60 * 30);
+  const urlFor = (name?: string) =>
+    name
+      ? ((signed ?? []).find((s: any) => s.path === `${userId}/${name}`)?.signedUrl ?? null)
+      : null;
+
+  return { photoUrl: urlFor(passportName), snapshotUrl: urlFor(snapshotName) };
+}
 
 // Explicit return type breaks the circular type-inference that would
 // otherwise result from checkInExam recursively calling itself below (the
@@ -705,6 +567,7 @@ export const getCheckinQueue = createServerFn({ method: "GET" }).handler(async (
       );
       return {
         submissionId: r.id as string,
+        studentId: r.student_id as string,
         studentName: r.profiles?.name ?? "Unknown",
         examTitle: r.exams?.title ?? "Untitled exam",
         score: r.check_in_score as number | null,
